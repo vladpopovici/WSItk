@@ -5,12 +5,15 @@ UTIL: utility functions for WSItk.
 @author: vlad
 """
 __version__ = 0.01
+from cv2 import kmeans
+from atk import Image
 __author__ = 'Vlad Popovici'
-__all__ = ['invert', '_R', '_G', '_B']
+__all__ = ['invert', '_R', '_G', '_B', 'requantize']
 
 import numpy as np
-
+from sklearn.cluster import MiniBatchKMeans
 from skimage.util import dtype_limits
+from skimage.exposure import rescale_intensity
 
 def invert(img, mx=None):
     """
@@ -56,3 +59,50 @@ def _G(_img):
     
 def _B(_img):
     return _img[:,:,2]
+
+
+def requantize(img, nlevels=2, method='linear'):
+    """
+    REQUANTIZE: changes the number of grey scale levels in an image.
+    
+    Usage:
+        res = requantize(img, nlevels=2)
+    
+    Args:
+        img (numpy.ndarray): a single channel image
+        nlevels (int): number of levels in the resulting image (<256)
+        method (string): 'linear' or 'adaptive'
+            'linear': the interval 0..max(dtype) is split into nlevels
+            equal length intervals onto which input values are mapped
+            'adaptive': vector quantization is applied to determine
+            the new quantification levels
+            
+    Returns:
+        numpy.ndarray: a single image of type uint8
+        
+    Raises:
+        ValueError: if the image is not single channel, or if invalid
+        arguments are given
+    """
+    
+    if img.ndim != 2:
+        raise ValueError('A single channel image is expected')
+    
+    assert(1 < nlevels < 256 )
+    assert(method.lower() in ['linear', 'adaptive'])
+    
+    if method.lower() == 'linear':
+        res = np.ndarray(img.shape, dtype=np.uint8)
+        res.fill(nlevels - 1)                        # nlevels-1 is the highest grey level
+        limits = np.linspace(0, 256, nlevels+1, dtype=np.uint8)
+        img = rescale_intensity(img, out_range=(0, 255))
+        for k in np.arange(start=nlevels-2, stop=-1, step=-1):
+            res[img < limits[k]] = k
+    elif method.lower() == 'adaptive':
+        vq = MiniBatchKMeans(n_clusters=nlevels)
+        vq.fit(img.reshape((-1,1)))
+        res = vq.labels_.reshape(img.shape).astype(np.uint8)
+    else:
+        ValueError('Incorrect method specified')
+             
+    return res
