@@ -1,6 +1,5 @@
-# -*- coding: utf-8 -*-
 """
-UTIL: utility functions for WSItk.
+INTENSITY: utility functions for intensity transformation.
 
 @author: vlad
 """
@@ -74,7 +73,7 @@ def requantize(img, nlevels=2, method='linear'):
         method (string): 'linear' or 'adaptive'
             'linear': the interval 0..max(dtype) is split into nlevels
             equal length intervals onto which input values are mapped
-            'adaptive': vector quantization is applied to determine
+            'kmeans': vector quantization is applied to determine
             the new quantification levels
             
     Returns:
@@ -88,8 +87,8 @@ def requantize(img, nlevels=2, method='linear'):
     if img.ndim != 2:
         raise ValueError('A single channel image is expected')
     
-    assert(1 < nlevels < 256 )
-    assert(method.lower() in ['linear', 'adaptive'])
+    assert(1 < nlevels <= 256 )
+    assert(method.lower() in ['linear', 'kmeans'])
     
     if method.lower() == 'linear':
         res = np.ndarray(img.shape, dtype=np.uint8)
@@ -98,7 +97,7 @@ def requantize(img, nlevels=2, method='linear'):
         img = rescale_intensity(img, out_range=(0, 255))
         for k in np.arange(start=nlevels-2, stop=-1, step=-1):
             res[img < limits[k]] = k
-    elif method.lower() == 'adaptive':
+    elif method.lower() == 'kmeans':
         vq = MiniBatchKMeans(n_clusters=nlevels)
         vq.fit(img.reshape((-1,1)))
         res = vq.labels_.reshape(img.shape).astype(np.uint8)

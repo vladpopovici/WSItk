@@ -61,3 +61,65 @@ def tissue_region_from_rgb(_img, _min_area=150, _g_th=None):
     mask = mh.close_holes(mask)
     
     return mask, _g_th
+
+
+def tissue_fat(_img, _clf):
+    """
+    Segment fat regions from a slide.
+
+    Args:
+        _img
+        _clf
+
+    Returns:
+    """
+
+    p = _clf.predict_proba(_img.reshape((-1,3)))[:,1]
+    p = p.reshape(_img.shape[:-1])
+
+    return p
+
+
+
+def tissue_chromatin(_img, _clf):
+    """
+
+    :param _img:
+    :param _clf:
+    :return:
+    """
+
+    p = _clf.predict_proba(_img.reshape((-1,3)))[:,1]
+    p = p.reshape(_img.shape[:-1])
+
+    return p
+
+
+def tissue_connective(_img, _clf):
+    """
+
+    :param _img:
+    :param _clf:
+    :return:
+    """
+
+    p = _clf.predict_proba(_img.reshape((-1,3)))[:,1]
+    p = p.reshape(_img.shape[:-1])
+
+    return p
+
+
+def tissue_components(_img, _models):
+    w, h, _ = _img.shape
+    n = w * h
+    
+    p_chrm = tissue_chromatin(_img, _models['chromatin']).reshape((-1,))
+    p_conn = tissue_connective(_img, _models['connective']).reshape((-1,))
+    p_fat  = tissue_fat(_img, _models['fat']).reshape((-1,))
+
+    prbs   = np.array([p_chrm, p_conn, p_fat])
+    
+    comp_map = np.argmax(prbs, 0)   # 0 = chromatin, 1 = connective, 2 = fat
+    comp_map = comp_map.reshape((w, h))
+    
+    return comp_map
