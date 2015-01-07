@@ -76,7 +76,7 @@ class GaborDescriptors(TexturalDescriptors):
             Grey scale image.
             
         Returns:
-            numpy.ndarray (vector) containing the Gabor descriptors (means and followed
+            numpy.ndarray (vector) containing the Gabor descriptors (means followed
             by the variances of the filter responses)
         """
         image = img_as_float(image)

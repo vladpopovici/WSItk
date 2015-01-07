@@ -5,7 +5,8 @@ INTENSITY: utility functions for intensity transformation.
 """
 __version__ = 0.01
 from cv2 import kmeans
-from atk import Image
+#from atk import Image
+
 __author__ = 'Vlad Popovici'
 __all__ = ['invert', '_R', '_G', '_B', 'requantize']
 
@@ -13,6 +14,7 @@ import numpy as np
 from sklearn.cluster import MiniBatchKMeans
 from skimage.util import dtype_limits
 from skimage.exposure import rescale_intensity
+
 
 def invert(img, mx=None):
     """
@@ -105,3 +107,4 @@ def requantize(img, nlevels=2, method='linear'):
         ValueError('Incorrect method specified')
              
     return res
+

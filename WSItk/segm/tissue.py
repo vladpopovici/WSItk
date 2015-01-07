@@ -12,12 +12,13 @@ __author__ = 'Vlad Popovici'
 import numpy as np
 
 import skimage.morphology as skm
+from skimage.segmentation import slic
 
 from sklearn.cluster import MiniBatchKMeans
 
 import mahotas as mh
 
-from util.intensity import _G
+from util.intensity import _R, _G, _B
 
 def tissue_region_from_rgb(_img, _min_area=150, _g_th=None):
     """
@@ -123,3 +124,25 @@ def tissue_components(_img, _models):
     comp_map = comp_map.reshape((w, h))
     
     return comp_map
+
+
+
+def superpixels(img, slide_magnif='x40'):
+    params = dict([('x40', dict([('n_segments', int(10*np.log2(img.size/3))), ('compactness', 50), ('sigma', 2.0)])),
+                   ('x20', dict([('n_segments', int(100*np.log2(img.size/3))), ('compactness', 50), ('sigma', 1.5)]))])
+
+    p = params[slide_magnif]
+
+
+    sp = slic(img, n_segments=p['n_segments'], compactness=p['compactness'], sigma=p['sigma'],
+              multichannel=True, convert2lab=True)
+
+    n_sp = sp.max() + 1
+    img_res = np.ndarray(img.shape, dtype=img.dtype)
+
+    for i in np.arange(n_sp):
+        img_res[sp == i, 0] = int(np.mean(img[sp == i, 0]))
+        img_res[sp == i, 1] = int(np.mean(img[sp == i, 1]))
+        img_res[sp == i, 2] = int(np.mean(img[sp == i, 2]))
+
+    return img_res

@@ -8,13 +8,13 @@ __author__ = 'vlad'
 
 import numpy as np
 
-def sliding_window(image, w_size, start=(0,0), step=(1,1)):
+def sliding_window(image_shape, w_size, start=(0,0), step=(1,1)):
     """Yield sub-images of the given image.
 
     Parameters
     ----------
-    image : array
-        Input image.
+    image_shape : tuple (nrows, ncols)
+        Image shape (img.shape).
     w_size : tuple (width, height)
         Window size as a pair of width and height values.
     start : tuple (x0, y0)
@@ -32,7 +32,7 @@ def sliding_window(image, w_size, start=(0,0), step=(1,1)):
         to the original image.
     """
 
-    img_w, img_h = image.shape
+    img_h, img_w = image_shape
 
     if w_size[0] < 2 or w_size[1] < 2:
         raise ValueError('Window size too small.')
@@ -46,10 +46,9 @@ def sliding_window(image, w_size, start=(0,0), step=(1,1)):
     top_left_corners = zip(x.reshape((-1,)).tolist(),
                            y.reshape((-1,)).tolist())
 
-    print(top_left_corners)
 
     for x0, y0 in top_left_corners:
         x1, y1 = x0 + w_size[0], y0 + w_size[1]
-        yield image[y0:y1, x0:x1]
+        yield (y0, y1, x0, x1)
 
 ## end sliding_window
