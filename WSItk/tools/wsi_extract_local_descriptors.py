@@ -24,7 +24,7 @@ import skimage.io
 
 def main():
     p = opt.ArgumentParser(description="""
-            Computes textural and tissue descriptors from an RGB image (of an H&E slide).
+            Computes textural tissue descriptors from an RGB image (of an H&E slide).
             """)
     p.add_argument('img_file', action='store', help='RGB image file of an H&E slide')
     p.add_argument('out_file', action='store', default='descriptors.dat',
@@ -39,6 +39,7 @@ def main():
                    help='Sliding window size (default: 50)')
     p.add_argument('--mask', action='store_true',
                    help='')
+
 
     args = p.parse_args()
     img_file = args.img_file
@@ -79,6 +80,7 @@ def main():
             f.write('\t'.join(str(x) for x in d))
             f.write('\n')
 
+    return
 
 # end main
 

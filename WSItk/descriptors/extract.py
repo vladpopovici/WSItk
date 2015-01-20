@@ -1,6 +1,22 @@
+"""
+EXTRACT: extracts a variety of local descriptors
+"""
+
+from __future__ import (absolute_import, division, print_function, unicode_literals)
+
 __author__ = 'vlad'
+__version__ = 0.2
+__all__ = ['get_gabor_desc', 'dist_gabor_desc', 'pdist_gabor', 
+           'extract_descriptors_he', 'pairwise_distances']
+
+
+from concurrent import futures
 
 import numpy as np
+from scipy.stats import entropy
+from scipy.spatial.distance import pdist
+
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from skimage.color import rgb2grey
 from skimage.transform import rescale, resize
@@ -8,91 +24,27 @@ from skimage.util import img_as_ubyte
 
 from skimage.util import img_as_ubyte
 from skimage.exposure import rescale_intensity
+from skimage.color import rgb2hsv
 
 from segm.tissue import tissue_components
-from stain.he import rgb2he
+from stain.he import rgb2he, rgb2he2
 from descriptors.txtbin import *
 from descriptors.txtgrey import *
 from util.intensity import requantize
 from util.explore import sliding_window
+from util.math import dist
 
-def extract_descriptors_he(_img, _components_models):
-    w, h, nch = _img.shape
-    npx = w * h
-    
-    n_grey_levels = 16
-    glcm_window = 15
-    
-    # Pre-processing:
-    # -get tissue basic components:
-    comp_map       = tissue_components(_img, _components_models)
-    img_chromatin  = (comp_map == 0).astype(np.uint8) # 0: chromatin
-    img_connective = (comp_map == 1).astype(np.uint8) # 1: connective
-    img_fat        = (comp_map == 2).astype(np.uint8) # 2: fat
-    # -extract intensity and stains
-    img_grey       = rgb2grey(_img)
-    img_grey       = requantize(img_grey, nlevels=n_grey_levels, method='linear')
-    img_h, img_e   = rgb2he(_img, normalize=True)
-    img_h          = requantize(img_h, nlevels=n_grey_levels, method='linear')
-    img_e          = requantize(img_e, nlevels=n_grey_levels, method='linear')
-
-    gabor = GaborDescriptors()
-    lbp = LBPDescriptors()
-    glcm = GLCMDescriptors(glcm_window, glcm_window/3, 0, n_grey_levels)
-
-    desc = {}
-    # 1. Descriptors from binary image
-    desc['bin_compact_chromatin'] = compactness(img_chromatin)
-    desc['bin_compact_connective'] = compactness(img_connective)
-    desc['bin_compact_fat'] = compactness(img_fat)
-
-    desc['bin_prop_chromatin'] = np.sum(img_chromatin, dtype=np.float64) / npx
-    desc['bin_prop_connective'] = np.sum(img_connective, dtype=np.float64) / npx
-    desc['bin_prop_fat'] = np.sum(img_fat, dtype=np.float64) / npx
-
-    # 2. Descriptors from grey-level image
-    desc['grey_gabor'] = gabor.compute(img_grey)
-    desc['grey_lbp'] = lbp.compute(img_grey)
-    desc['grey_glcm'] = glcm.compute(img_grey)
-
-    # 3. Descriptors from intensity image (Haematoxylin)
-    desc['h_gabor'] = gabor.compute(img_h)
-    desc['h_lbp'] = lbp.compute(img_h)
-    desc['h_glcm'] = glcm.compute(img_h)
-
-    # 4. Descriptors from intensity image (Eosin)
-    desc['e_gabor'] = gabor.compute(img_e)
-    desc['e_lbp'] = lbp.compute(img_e)
-    desc['e_glcm'] = glcm.compute(img_e)
-
-    return desc
+# local worker
+def _gabor_worker(_img, _feat, _box):
+    return {'roi': _box, 'gabor': _feat.compute(_img[_box[0]:_box[1], _box[2]:_box[3]])}
 
 
-def dist_descriptors_he(x1, x2, w=None):
-    assert (len(x1) == len(x2))
-
-    if w is None:
-        w = np.ones((1,len(x1)))
-
-    d = 0.0
-
-    d += GaborDescriptors.dist(x1['grey_gabor'], x2['grey_gabor'])
-    d += GaborDescriptors.dist(x1['h_gabor'], x2['h_gabor'])
-    d += GaborDescriptors.dist(x1['e_gabor'], x2['e_gabor'])
-
-    d += LBPDescriptors.dist(x1['grey_lbp'], x2['grey_lbp'])
-    d += LBPDescriptors.dist(x1['h_lbp'], x2['h_lbp'])
-    d += LBPDescriptors.dist(x1['e_lbp'], x2['e_lbp'])
-
-    d += GLCMDescriptors.dist(x1['grey_glcm'], x2['grey_glcm'])
-    d += GLCMDescriptors.dist(x1['h_glcm'], x2['h_glcm'])
-    d += GLCMDescriptors.dist(x1['e_glcm'], x2['e_glcm'])
-
-    return d
+def dist_gabor_desc(d1, d2, _method="euclidean"):
+    return GaborDescriptors.dist(d1['gabor'], d2['gabor'], _method)
 
 
 # get_gabor_desc
-def get_gabor_desc(img, gdesc, w_size, scale=1.0, mask=None):
+def get_gabor_desc(img, gdesc, w_size, scale=1.0, mask=None, _ncpus=None):
     """
     Extract local Gabor descriptors by scanning an image.
 
@@ -128,22 +80,277 @@ def get_gabor_desc(img, gdesc, w_size, scale=1.0, mask=None):
         assert (mask.shape == img.shape)
         mask = img_as_ubyte(resize(mask, img_.shape))
 
-    desc = []
-
     img_iterator = sliding_window(img_.shape, (w_size, w_size), step=(w_size, w_size))  # non-overlapping windows
 
+    res = []
     if mask is None:
-        for w_coords in img_iterator:
-            z = np.hstack((np.array(w_coords),
-                           gdesc.compute(img_[w_coords[0]:w_coords[1], w_coords[2]:w_coords[3]])))
-            desc.append(z.tolist())
+        with ProcessPoolExecutor(max_workers=_ncpus) as executor:
+            for w_coords in img_iterator:
+                res.append(executor.submit(_gabor_worker, img_, gdesc, w_coords))
     else:
         th = w_size * w_size / 20.0   # consider only those windows with more than 5% pixels from object
-        for w_coords in img_iterator:
-            if mask[w_coords[0]:w_coords[1], w_coords[2]:w_coords[3]].sum() > th:
-                z = np.hstack((np.array(w_coords),
-                               gdesc.compute(img_[w_coords[0]:w_coords[1], w_coords[2]:w_coords[3]])))
-                desc.append(z.tolist())
+        with ProcessPoolExecutor(max_workers=_ncpus) as executor:
+            for w_coords in img_iterator:
+                if mask[w_coords[0]:w_coords[1], w_coords[2]:w_coords[3]].sum() > th:
+                    res.append(executor.submit(_gabor_worker, img_, gdesc, w_coords))
+
+    desc = []
+    for f in as_completed(res):
+        desc.append(f.result())
 
     return desc
 # end get_gabor_desc()
+
+
+def _worker2(_hue, _h, _e, _gabor, _lbp, _roi):
+    """
+    Computes the local descriptors on a patch.
+    :param _hue:
+    :param _h:
+    :param _e:
+    :param _gabor:
+    :param _lbp:
+    :param _roi:
+    :return:
+    """
+    hue_mean = _hue[_roi[0]:_roi[1], _roi[2]:_roi[3]].mean()
+    hue_std  = _hue[_roi[0]:_roi[1], _roi[2]:_roi[3]].std()
+
+    g_h = _gabor.compute(_h[_roi[0]:_roi[1], _roi[2]:_roi[3]])
+    g_e = _gabor.compute(_e[_roi[0]:_roi[1], _roi[2]:_roi[3]])
+
+    l_h = _lbp.compute(_h[_roi[0]:_roi[1], _roi[2]:_roi[3]])
+    l_e = _lbp.compute(_e[_roi[0]:_roi[1], _roi[2]:_roi[3]])
+
+    res = {'roi': _roi, 'hue_mean': hue_mean, 'hue_std': hue_std,
+           'gabor_haem': g_h, 'gabor_eos': g_e, 'lbp_haem': l_h, 'lbp_eos': l_e}
+
+    return res
+
+
+# EXTRACT_LOCAL_DESCRIPTORS_HE
+def extract_descriptors_he(_img, w_size, _ncpus=None):
+    """
+    EXRACT_LOCAL_DESCRIPTORS_HE: extracts a set of local descriptors of the image:
+        - histogram of Hue values
+        - histogram of haematoxylin and eosin planes
+        - Gabor descriptors in haematoxylin and eosin spaces, respectively
+        - local binary patterns in haematoxylin and eosin spaces, respectively
+
+    :param _img: numpy.ndarray
+
+    :param w_size: int
+
+    :return: list
+    """
+    assert (_img.ndim == 3)
+
+    img_iterator = sliding_window(_img.shape[:-1], (w_size, w_size), step=(w_size, w_size))  # non-overlapping windows
+    gabor = GaborDescriptors()
+    lbp   = LBPDescriptors()
+
+    hsv = rgb2hsv(_img)
+    h, e, _ = rgb2he2(_img)
+
+    res = []
+    with ProcessPoolExecutor(max_workers=_ncpus) as executor:
+        for w_coords in img_iterator:
+            res.append(executor.submit(_worker2, hsv[:,:,0], h, e, gabor, lbp, w_coords))
+
+    desc = []
+    for f in as_completed(res):
+        desc.append(f.result())
+
+    return desc
+
+
+def _dist(d1, d2):
+    d = 0.0
+    d += GaborDescriptors.dist(d1['gabor_haem'], d2['gabor_haem'])
+    d += GaborDescriptors.dist(d1['gabor_eos'], d2['gabor_eos'])
+    d += LBPDescriptors.dist(d1['lbp_haem'], d2['lbp_haem'], method='bh')
+    d += LBPDescriptors.dist(d1['lbp_eos'], d2['lbp_eos'], method='bh')
+    d += (d1['hue_mean'] - d2['hue_mean']) / (np.sqrt(0.5*(d1['hue_std']**2) + d2['hue_std']**2))   # t-stats like
+
+    return d
+
+
+# pairwise distances
+
+def pairwise_distances(desc, _distfn=_dist, set_to_zero=1e-16):
+    """
+    PAIRWISE_DISTANCES: computes the pairwise distances between local descriptors.
+
+    :param desc: list
+     A list of descriptors, as returned by get_*_desc() functions
+    :return: numpy.ndarray
+     The lower triangle of the square matrix with distances. (As returned by
+     pdist() function from scipy.spatial.distance.)
+    """
+    n = len(desc)
+    d = np.zeros((n*(n-1)/2))
+    for i in np.arange(1, n):
+        for j in np.arange(i):
+            d[n*j - j*(j+1)/2 + i - 1 - j] = _distfn(desc[i], desc[j])
+    d[d <= set_to_zero] = 0.0
+
+    return d
+# end pairwise_distances
+
+
+def _dist_worker_gabor(list_ft, i):
+    # Compute the distance between list_ft[i] and each element in list_ft[idx]
+    d = map(dist_gabor_desc, list_ft[:i], [list_ft[i]]*i)
+    d.insert(0, i)
+    
+    return d
+    
+
+def pdist_gabor(desc, set_to_zero=1e-16, _ncpus=None):
+    n = len(desc)
+    l = []
+    with ProcessPoolExecutor(max_workers=_ncpus) as executor:
+        for i in np.arange(1, n):
+            l.append(executor.submit(_dist_worker_gabor, desc, i))
+
+    d = np.zeros((n*(n-1)/2))            
+    for x in as_completed(l):
+        res = x.result()
+        i = res[0]
+        j = np.arange(i)
+        idx = (n*j - j*(j+1)/2 + i - 1 - j).astype(np.int64)
+        d[idx] = res[1:]
+        
+    d[d <= set_to_zero] = 0.0
+
+    return d
+
+
+def dist_lbp_desc(d1, d2, _method="bh"):
+    return LBPDescriptors.dist(d1['lbp'], d2['lbp'], _method)
+
+
+def _dist_worker_lbp(list_ft, i):
+    # Compute the distance between list_ft[i] and each element in list_ft[idx]
+    d = map(dist_lbp_desc, list_ft[:i], [list_ft[i]]*i)
+    d.insert(0, i)
+
+    return d
+
+
+def pdist_lbp(desc, set_to_zero=1e-16, _ncpus=None):
+    n = len(desc)
+    l = []
+    with ProcessPoolExecutor(max_workers=_ncpus) as executor:
+        for i in np.arange(1, n):
+            l.append(executor.submit(_dist_worker_lbp, desc, i))
+
+    d = np.zeros((n*(n-1)/2))
+    for x in as_completed(l):
+        res = x.result()
+        i = res[0]
+        j = np.arange(i)
+        idx = (n*j - j*(j+1)/2 + i - 1 - j).astype(np.int64)
+        d[idx] = res[1:]
+
+    d[d <= set_to_zero] = 0.0
+
+    return d
+
+
+def dist_hog_desc(d1, d2, _method="bh"):
+    return LBPDescriptors.dist(d1['hog'], d2['hog'], _method)
+
+
+def _dist_worker_hog(list_ft, i):
+    # Compute the distance between list_ft[i] and each element in list_ft[idx]
+    d = map(dist_hog_desc, list_ft[:i], [list_ft[i]]*i)
+    d.insert(0, i)
+
+    return d
+
+
+def pdist_hog(desc, set_to_zero=1e-16, _ncpus=None):
+    n = len(desc)
+    l = []
+    with ProcessPoolExecutor(max_workers=_ncpus) as executor:
+        for i in np.arange(1, n):
+            l.append(executor.submit(_dist_worker_hog, desc, i))
+
+    d = np.zeros((n*(n-1)/2))
+    for x in as_completed(l):
+        res = x.result()
+        i = res[0]
+        j = np.arange(i)
+        idx = (n*j - j*(j+1)/2 + i - 1 - j).astype(np.int64)
+        d[idx] = res[1:]
+
+    d[d <= set_to_zero] = 0.0
+
+    return d
+
+
+# local worker
+def _desc_worker(_img, _feat, _box, _label):
+    return {'roi': _box, _label: _feat.compute(_img[_box[0]:_box[1], _box[2]:_box[3]])}
+
+
+# get_local_desc
+def get_local_desc(img, desc, img_iterator, label, _ncpus=None):
+    """
+    Extract local descriptors by scanning an image, according to a pre-specified
+    algorithm.
+
+    :param img: numpy.ndarray
+      Input intensity (grey-scale) image.
+
+    :param desc: txtgrey.LocalDescriptors
+      An object encoding the local descriptor.
+
+    :param img_iterator: iterator
+      An iterator over the image. See util.explore for various iterators.
+
+    :param label: string
+      A label to identify the descriptor.
+
+    :return: list
+      A list with the local descriptors corresponding to each position
+      of the sliding window. Each element of the list is a vector
+      containing the coordinates of the local window (first 4 elements)
+      and the result of applying the local descriptor over image[roi].
+    """
+
+    assert (img.ndim == 2)
+
+    res = []
+    with ProcessPoolExecutor(max_workers=_ncpus) as executor:
+        for w_coords in img_iterator:
+             res.append(executor.submit(_desc_worker, img, desc, w_coords, label))
+
+    desc = []
+    for f in as_completed(res):
+        desc.append(f.result())
+
+    return desc
+# end get_local_desc()
+
+
+def desc_to_matrix(desc, label):
+    """
+    Converts a list of descriptors to a matrix representation, with one
+    sample per row.
+
+    :param desc:
+       list of descriptors, as returned by get_*_desc() functions
+    :param label:
+       the label of the descriptors to be extracted from the list
+    :return: numpy.ndarray
+    """
+
+    l = [d[label] for d in desc]
+
+    if len(l) == 0:
+        # no such descriptors
+        return None
+
+    return np.array(l)

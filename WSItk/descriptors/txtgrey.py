@@ -11,13 +11,18 @@ from abc import ABCMeta, abstractmethod
 
 import numpy as np
 from numpy import dot
+
 from scipy import ndimage as nd
 from scipy.linalg import norm
 from scipy.stats import entropy
+from scipy.signal import convolve2d
+
 from skimage.filter import gabor_kernel
 from skimage.util import img_as_float
 from skimage.feature.texture import greycoprops, greycomatrix,\
     local_binary_pattern
+from skimage.exposure import rescale_intensity
+from skimage.feature import hog
 
 ## A base class for textural descriptors.
 class TexturalDescriptors:
@@ -193,8 +198,9 @@ class GLCMDescriptors(TexturalDescriptors):
 
         return res
     
-    
-    def dist(self, ft1, ft2, method='kl'):
+
+    @staticmethod
+    def dist(ft1, ft2, method='bh'):
         """
         Computes the distance between two sets of GLCM features. The features are
         assumed to have been computed using the same parameters. The distance is
@@ -209,6 +215,8 @@ class GLCMDescriptors(TexturalDescriptors):
             the method used for computing the distance between the histograms of features:
             'kl' - Kullback-Leibler divergence (symmetrized by 0.5*(KL(p,q)+KL(q,p))
             'js' - Jensen-Shannon divergence: 0.5*(KL(p,m)+KL(q,m)) where m=(p+q)/2
+            'bh' - Bhattacharyya distance: -log(sqrt(sum_i (p_i*q_i)))
+            'ma' - Matusita distance: sqrt(sum_i (sqrt(p_i)-sqrt(q_i))**2)
 
         Returns:
             dict
@@ -216,7 +224,9 @@ class GLCMDescriptors(TexturalDescriptors):
         """
         # distance methods
         dm = {'kl': lambda x_, y_: 0.5*(entropy(x_, y_) + entropy(y_, x_)),
-              'js': lambda x_, y_: 0.5*(entropy(x_, 0.5*(x_+y_))+entropy(y_,0.5*(x_+y_)))
+              'js': lambda x_, y_: 0.5*(entropy(x_, 0.5*(x_+y_))+entropy(y_,0.5*(x_+y_))),
+              'bh': lambda x_, y_: -np.log(np.sum(np.sqrt(x_*y_))),
+              'ma': lambda x_, y_: np.sqrt(np.sum((np.sqrt(x_)-np.sqrt(y_))**2))
               }
 
 
@@ -276,8 +286,9 @@ class LBPDescriptors(TexturalDescriptors):
         
         return hist
     
-    
-    def dist(self, ft1, ft2, method='kl'):
+
+    @staticmethod
+    def dist(ft1, ft2, method='bh'):
         """
         Computes the distance between two sets of LBP features. The features are 
         assumed to have been computed using the same parameters. The features 
@@ -291,10 +302,14 @@ class LBPDescriptors(TexturalDescriptors):
             the method used for computing the distance between the two sets of features:
             'kl' - Kullback-Leibler divergence (symmetrized by 0.5*(KL(p,q)+KL(q,p))
             'js' - Jensen-Shannon divergence: 0.5*(KL(p,m)+KL(q,m)) where m=(p+q)/2
+            'bh' - Bhattacharyya distance: -log(sqrt(sum_i (p_i*q_i)))
+            'ma' - Matusita distance: sqrt(sum_i (sqrt(p_i)-sqrt(q_i))**2)
         """
         # distance methods
         dm = {'kl': lambda x_, y_: 0.5*(entropy(x_, y_) + entropy(y_, x_)),
-              'js': lambda x_, y_: 0.5*(entropy(x_, 0.5*(x_+y_))+entropy(y_,0.5*(x_+y_)))
+              'js': lambda x_, y_: 0.5*(entropy(x_, 0.5*(x_+y_))+entropy(y_,0.5*(x_+y_))),
+              'bh': lambda x_, y_: -np.log(np.sum(np.sqrt(x_*y_))),
+              'ma': lambda x_, y_: np.sqrt(np.sum((np.sqrt(x_)-np.sqrt(y_))**2))
               }
         
         
@@ -305,3 +320,305 @@ class LBPDescriptors(TexturalDescriptors):
         return dm[method](ft1, ft2)
 
 ## end class LBPDescriptors     
+
+
+# MFSDescriptors - Multi-Fractal Dimensions 
+class MFSDescriptors(TexturalDescriptors):
+    """
+    Multi-Fractal Dimensions for texture description. 
+    
+    Adapted from IMFRACTAL project at https://github.com/rbaravalle/imfractal
+
+    """
+    def __init__(self, _nlevels_avg=1, _wsize=15, _niter=1):
+        """
+        Initialize an MFDDescriptors object.
+        
+        Arguments:
+            _nlevels_avg: number of levels to be averaged in density computation (uint)
+               =1: no averaging
+            _wsize: size of the window for computing descriptors (uint)
+            _niter: number of iterations
+        """
+        self.nlevels_avg = _nlevels_avg
+        self.wsize = _wsize
+        self.niter = _niter 
+
+        return
+        
+    def compute(self, im):
+        """
+        Computes MFS over the given image.
+        
+        Arguments:
+            im: image (grey-scale) (numpy.ndarray)
+            
+        Returns:
+            a vector of descriptors (numpy.array)
+        """
+        ## TODO: this needs much polishing to get it run faster!
+        
+        assert(im.ndim == 2)
+        #Using [0..255] to denote the intensity profile of the image
+        grayscale_box =[0, 255]
+
+        #Preprocessing: default intensity value of image ranges from 0 to 255
+        if abs(im).max() < 1:
+            im = rescale_intensity(im, out_range=(0, 255))
+
+        #######################
+
+        ### Estimating density function of the image
+        ### by solving least squares for D in  the equation  
+        ### log10(bw) = D*log10(c) + b 
+        r = 1.0/max(im.shape)
+        c = np.log10(r * np.arange(start=1, stop=self.nlevels_avg+1))
+
+        bw = np.zeros((self.nlevels_avg, im.shape[0], im.shape[1]), dtype=np.float32)
+        bw[0,:,:] = im + 1
+
+        def _gauss_krn(size):
+            """ Returns a normalized 2D gauss kernel array for convolutions """
+            if size <= 3:
+                sigma = 1.5
+            else:
+                sigma = size / 2.0
+                
+            y, x = np.mgrid[-(size-1.0)/2.0:(size-1.0)/2.0+1, -(size-1.0)/2.0:(size-1.0)/2.0+1]       
+            s2 = 2.0 * sigma**2
+            g = np.exp(-(x**2 + y**2) / s2)
+            
+            return g / g.sum()
+
+        k = 1
+        if self.nlevels_avg > 1:
+            bw[1,:,:] = convolve2d(bw[0,:,:], _gauss_krn(k+1), mode="full")[1:,1:]*((k+1)**2)
+
+        for k in np.arange(2, self.nlevels_avg):
+            temp = convolve2d(bw[0,:,:], _gauss_krn(k+1), mode="full")*((k+1)**2)
+            if k == 4:
+                bw[k] = temp[k-1-1:temp.shape[0]-(k/2),k-1-1:temp.shape[1]-(k/2)]            
+            else:
+                bw[k] = temp[k-1:temp.shape[0]-(1),k-1:temp.shape[1]-(1)]
+
+        bw = np.log10(bw)
+        n1 = np.sum(c**2)
+        n2 = bw[0]*c[0]
+        for k in np.arange(1, self.nlevels_avg):
+            n2 += bw[k] * c[k]
+
+        sum3 = np.sum(bw, axis=0)
+
+        if self.nlevels_avg > 1:
+            D = (n2*self.nlevels_avg - c.sum()*sum3) / (n1*self.nlevels_avg - c.sum()**2)
+            min_D, max_D  = 1.0, 4.0
+            D = grayscale_box[1] * (D-min_D)/(max_D - min_D) + grayscale_box[0]
+        else:
+            D = im
+
+        D = D[self.nlevels_avg-1:D.shape[0]-self.nlevels_avg+1, self.nlevels_avg-1:D.shape[1]-self.nlevels_avg+1]
+
+        IM = np.zeros(D.shape)
+        gap = np.ceil((grayscale_box[1] - grayscale_box[0])/np.float32(self.wsize))
+        center = np.zeros(self.wsize)
+        for k in np.arange(1, self.wsize+1):
+            bin_min = (k-1) * gap
+            bin_max = k * gap - 1
+            center[k-1] = round((bin_min + bin_max) / 2.0)
+            D = ((D <= bin_max) & (D >= bin_min)).choose(D, center[k-1])
+
+        D = ((D >= bin_max)).choose(D,0)
+        D = ((D < 0)).choose(D,0)
+        IM = D
+
+        #Constructing the filter for approximating log fitting
+        r = max(IM.shape)
+        c = np.zeros(self.niter)
+        c[0] = 1;
+        for k in range(1,self.niter):
+            c[k] = c[k-1]/(k+1)
+        c = c / sum(c);
+
+        #Construct level sets
+        Idx_IM = np.zeros(IM.shape);
+        for k in range(0,self.wsize):
+            IM = (IM == center[k]).choose(IM,k+1)
+
+        Idx_IM = IM
+        IM = np.zeros(IM.shape)
+
+        #Estimate MFS by box-counting
+        num = np.zeros(self.niter)
+        MFS = np.zeros(self.wsize)
+        for k in range(1,self.wsize+1):
+            IM = np.zeros(IM.shape)
+            IM = (Idx_IM==k).choose(Idx_IM,255+k)
+            IM = (IM<255+k).choose(IM,0)
+            IM = (IM>0).choose(IM,1)
+            temp = max(IM.sum(),1)
+            num[0] = np.log10(temp)/np.log10(r);    
+            for j in range(2,self.niter+1):
+                mask = np.ones((j,j))
+                bw = convolve2d(IM, mask,mode="full")[1:,1:]
+                indx = np.arange(0,IM.shape[0],j)
+                indy = np.arange(0,IM.shape[1],j)
+                bw = bw[np.ix_(indx,indy)]
+                idx = (bw>0).sum()
+                temp = max(idx,1)
+                num[j-1] = np.log10(temp)/np.log10(r/j)
+
+            MFS[k-1] = sum(c*num)
+
+        return MFS
+        
+    @staticmethod
+    def dist(ft1, ft2, method='euclidean'):
+        """
+        Compute the distance between two sets of multifractal dimension features. 
+        Possible distance types are:
+            -Euclidean
+            -cosine distance: this is not a proper distance! 
+        
+        """
+        assert (ft1.ndim == ft2.ndim == 1)
+        assert (ft1.size == ft2.size)
+    
+        
+        dm = {'euclidean' : lambda x_, y_: norm(x_-y_),
+              'cosine': lambda x_, y_: dot(x_, y_) / (norm(x_)*norm(y_)) 
+              }
+        method = method.lower()
+        if method not in dm.keys():
+            raise ValueError('Unknown method')
+        
+        return dm[method](ft1, ft2)
+# end class MFSDescriptors        
+
+
+class HOGDescriptors(TexturalDescriptors):
+    """
+    Provides local descriptors in terms of histograms of oriented gradients.
+    """
+    def __init__(self, _norient=9, _ppc=(128,128), _cpb=(4,4)):
+        """
+        Initialize an HOGDescriptors object. For details see the HOG
+        descriptor in sciki-image package:
+        skimage.feature.hog
+
+        :param _norient: uint
+          number of orientations of the gradients
+        :param _ppc: uint
+          pixels per cell
+        :param _cpb: uint
+          cells per block
+        """
+        self.norient = _norient
+        self.ppc = _ppc
+        self.cpb = _cpb
+
+        return
+
+
+    def compute(self, image):
+        """
+        Computes HOG on a given image.
+
+        :param image: numpy.ndarray
+
+        :return: numpy.ndarray
+          a vector of features
+        """
+        r = hog(image, pixels_per_cell=self.ppc, cells_per_block=self.cpb,
+                visualise=False, normalise=False)
+
+        return r
+
+
+    @staticmethod
+    def dist(ft1, ft2, method=None):
+        """
+        Compute the distance between two sets of HOG features. Possible distance types
+        are:
+            -Euclidean
+            -cosine distance: this is not a proper distance!
+
+        """
+        dm = {'euclidean' : lambda x_, y_: norm(x_-y_),
+              'cosine': lambda x_, y_: dot(x_, y_) / (norm(x_)*norm(y_))
+              }
+
+        method = method.lower()
+        if method not in dm.keys():
+            raise ValueError('Unknown method')
+
+        return dm[method](ft1, ft2)
+# end HOGDescriptors
+
+
+class HistDescriptors(TexturalDescriptors):
+    """
+    Provides local descriptors in terms of histograms of grey levels.
+    """
+    def __init__(self, _interval=(0,1), _nbins=10):
+        """
+        Initialize an HistDescriptors object: a simple histogram of
+        grey-levels
+
+        :param _interval: tuple
+          the minimum and maximum values to be accounted for
+        :param _nbins: uint
+          number of bins in the histogram
+        """
+        self.interval = _interval
+        self.nbins = _nbins
+
+        return
+
+
+    def compute(self, image):
+        """
+        Computes the historgam on a given image.
+
+        :param image: numpy.ndarray
+
+        :return: numpy.ndarray
+          a vector of frequencies
+        """
+        if image.ndim != 2:
+            raise ValueError("Only grey-level images are supported")
+
+        h,_ = np.histogram(image, normed=True, bins=self.nbins, range=self.interval)
+
+        return h
+
+
+    @staticmethod
+    def dist(ft1, ft2, method='bh'):
+        """
+        Computes the distance between two sets of histogram features.
+
+        Args:
+            ft1, ft2: numpy.ndarray (vector)
+            histograms as returned by compute()
+
+            method: string
+            the method used for computing the distance between the two sets of features:
+            'kl' - Kullback-Leibler divergence (symmetrized by 0.5*(KL(p,q)+KL(q,p))
+            'js' - Jensen-Shannon divergence: 0.5*(KL(p,m)+KL(q,m)) where m=(p+q)/2
+            'bh' - Bhattacharyya distance: -log(sqrt(sum_i (p_i*q_i)))
+            'ma' - Matusita distance: sqrt(sum_i (sqrt(p_i)-sqrt(q_i))**2)
+        """
+        # distance methods
+        dm = {'kl': lambda x_, y_: 0.5*(entropy(x_, y_) + entropy(y_, x_)),
+              'js': lambda x_, y_: 0.5*(entropy(x_, 0.5*(x_+y_))+entropy(y_,0.5*(x_+y_))),
+              'bh': lambda x_, y_: -np.log(np.sum(np.sqrt(x_*y_))),
+              'ma': lambda x_, y_: np.sqrt(np.sum((np.sqrt(x_)-np.sqrt(y_))**2))
+              }
+
+
+        method = method.lower()
+        if method not in dm.keys():
+            raise ValueError('Unknown method')
+
+        return dm[method](ft1, ft2)
+# end HistDescriptors
