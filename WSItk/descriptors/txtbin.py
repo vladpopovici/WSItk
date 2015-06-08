@@ -5,7 +5,7 @@ other packages.
 
 import numpy as np
 
-from skimage.filter.rank import median
+from skimage.filters.rank import median
 from skimage.morphology import disk
 
 

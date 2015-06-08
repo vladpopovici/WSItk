@@ -139,7 +139,7 @@ def tissue_components(_img, _models, _min_prob=0.4999999999):
 
     prbs   = np.array([p_bkg, p_chrm, p_conn, p_fat])
     
-    comp_map = np.argmax(prbs, 0)   # 0 = background, 1 = chromatin, 2 = connective, 3 = fat
+    comp_map = np.argmax(prbs, axis=1)   # 0 = background, 1 = chromatin, 2 = connective, 3 = fat
     comp_map = comp_map.reshape((w, h))
     
     return comp_map
@@ -180,27 +180,3 @@ def superpixels(img, slide_magnif='x40'):
 
     return img_res
 
-
-def unsupervised_greylevel_gabor(im, wsize, gdesc):
-    """
-    Unsupervised (clustering-based) segmentation of intensity images using
-    Gabor waveletes as textural descriptors.
-    
-    :param im: numpy.ndarray
-      Image as a 2D array.
-      
-    :param wsize: uint
-      Sliding window size.
-      
-    :param gdesc: GaborDescriptors
-      An object of type GaborDescriptors.
-    """
-    
-    assert(im.ndim == 2)
-    
-    # 1. Compute features
-    dsc = get_gabor_desc(im, gdesc, wsize, scale=1.0, mask=None, _ncpus=None)
-    
-    # 2. Compute pairwise distances
-    dst = 0
-    

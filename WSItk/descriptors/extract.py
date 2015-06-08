@@ -7,10 +7,13 @@ from __future__ import (absolute_import, division, print_function, unicode_liter
 __author__ = 'vlad'
 __version__ = 0.2
 __all__ = ['get_gabor_desc', 'dist_gabor_desc', 'pdist_gabor', 
-           'extract_descriptors_he', 'pairwise_distances']
+           'extract_descriptors_he', 'pairwise_distances',
+           'get_local_desc', 'desc_to_matrix', 'pdist_hog', 'dist_hog_desc',
+           'pdist_lbp', 'dist_lbp_desc', 'pdist_mfs', 'dist_mfs_desc', 'matrix_to_desc']
 
 
 from concurrent import futures
+import time
 
 import numpy as np
 from scipy.stats import entropy
@@ -40,7 +43,7 @@ def _gabor_worker(_img, _feat, _box):
 
 
 def dist_gabor_desc(d1, d2, _method="euclidean"):
-    return GaborDescriptors.dist(d1['gabor'], d2['gabor'], _method)
+    return GaborDescriptor.dist(d1['gabor'], d2['gabor'], _method)
 
 
 # get_gabor_desc
@@ -86,11 +89,13 @@ def get_gabor_desc(img, gdesc, w_size, scale=1.0, mask=None, _ncpus=None):
     if mask is None:
         with ProcessPoolExecutor(max_workers=_ncpus) as executor:
             for w_coords in img_iterator:
+                time.sleep(0.01)
                 res.append(executor.submit(_gabor_worker, img_, gdesc, w_coords))
     else:
         th = w_size * w_size / 20.0   # consider only those windows with more than 5% pixels from object
         with ProcessPoolExecutor(max_workers=_ncpus) as executor:
             for w_coords in img_iterator:
+                time.sleep(0.01)
                 if mask[w_coords[0]:w_coords[1], w_coords[2]:w_coords[3]].sum() > th:
                     res.append(executor.submit(_gabor_worker, img_, gdesc, w_coords))
 
@@ -146,8 +151,8 @@ def extract_descriptors_he(_img, w_size, _ncpus=None):
     assert (_img.ndim == 3)
 
     img_iterator = sliding_window(_img.shape[:-1], (w_size, w_size), step=(w_size, w_size))  # non-overlapping windows
-    gabor = GaborDescriptors()
-    lbp   = LBPDescriptors()
+    gabor = GaborDescriptor()
+    lbp   = LBPDescriptor()
 
     hsv = rgb2hsv(_img)
     h, e, _ = rgb2he2(_img)
@@ -166,10 +171,10 @@ def extract_descriptors_he(_img, w_size, _ncpus=None):
 
 def _dist(d1, d2):
     d = 0.0
-    d += GaborDescriptors.dist(d1['gabor_haem'], d2['gabor_haem'])
-    d += GaborDescriptors.dist(d1['gabor_eos'], d2['gabor_eos'])
-    d += LBPDescriptors.dist(d1['lbp_haem'], d2['lbp_haem'], method='bh')
-    d += LBPDescriptors.dist(d1['lbp_eos'], d2['lbp_eos'], method='bh')
+    d += GaborDescriptor.dist(d1['gabor_haem'], d2['gabor_haem'])
+    d += GaborDescriptor.dist(d1['gabor_eos'], d2['gabor_eos'])
+    d += LBPDescriptor.dist(d1['lbp_haem'], d2['lbp_haem'], method='bh')
+    d += LBPDescriptor.dist(d1['lbp_eos'], d2['lbp_eos'], method='bh')
     d += (d1['hue_mean'] - d2['hue_mean']) / (np.sqrt(0.5*(d1['hue_std']**2) + d2['hue_std']**2))   # t-stats like
 
     return d
@@ -211,6 +216,7 @@ def pdist_gabor(desc, set_to_zero=1e-16, _ncpus=None):
     l = []
     with ProcessPoolExecutor(max_workers=_ncpus) as executor:
         for i in np.arange(1, n):
+            time.sleep(0.01)
             l.append(executor.submit(_dist_worker_gabor, desc, i))
 
     d = np.zeros((n*(n-1)/2))            
@@ -227,7 +233,7 @@ def pdist_gabor(desc, set_to_zero=1e-16, _ncpus=None):
 
 
 def dist_lbp_desc(d1, d2, _method="bh"):
-    return LBPDescriptors.dist(d1['lbp'], d2['lbp'], _method)
+    return LBPDescriptor.dist(d1['lbp'], d2['lbp'], _method)
 
 
 def _dist_worker_lbp(list_ft, i):
@@ -243,6 +249,7 @@ def pdist_lbp(desc, set_to_zero=1e-16, _ncpus=None):
     l = []
     with ProcessPoolExecutor(max_workers=_ncpus) as executor:
         for i in np.arange(1, n):
+            time.sleep(0.01)
             l.append(executor.submit(_dist_worker_lbp, desc, i))
 
     d = np.zeros((n*(n-1)/2))
@@ -259,7 +266,7 @@ def pdist_lbp(desc, set_to_zero=1e-16, _ncpus=None):
 
 
 def dist_hog_desc(d1, d2, _method="bh"):
-    return LBPDescriptors.dist(d1['hog'], d2['hog'], _method)
+    return HOGDescriptor.dist(d1['hog'], d2['hog'], _method)
 
 
 def _dist_worker_hog(list_ft, i):
@@ -275,6 +282,7 @@ def pdist_hog(desc, set_to_zero=1e-16, _ncpus=None):
     l = []
     with ProcessPoolExecutor(max_workers=_ncpus) as executor:
         for i in np.arange(1, n):
+            time.sleep(0.01)
             l.append(executor.submit(_dist_worker_hog, desc, i))
 
     d = np.zeros((n*(n-1)/2))
@@ -289,6 +297,38 @@ def pdist_hog(desc, set_to_zero=1e-16, _ncpus=None):
 
     return d
 
+
+def dist_mfs_desc(d1, d2, _method="euclidean"):
+    return MFSDescriptor.dist(d1['mfs'], d2['mfs'], _method)
+
+
+def _dist_worker_mfs(list_ft, i):
+    # Compute the distance between list_ft[i] and each element in list_ft[idx]
+    d = map(dist_mfs_desc, list_ft[:i], [list_ft[i]]*i)
+    d.insert(0, i)
+
+    return d
+
+
+def pdist_mfs(desc, set_to_zero=1e-16, _ncpus=None):
+    n = len(desc)
+    l = []
+    with ProcessPoolExecutor(max_workers=_ncpus) as executor:
+        for i in np.arange(1, n):
+            time.sleep(0.01)
+            l.append(executor.submit(_dist_worker_mfs, desc, i))
+
+    d = np.zeros((n*(n-1)/2))
+    for x in as_completed(l):
+        res = x.result()
+        i = res[0]
+        j = np.arange(i)
+        idx = (n*j - j*(j+1)/2 + i - 1 - j).astype(np.int64)
+        d[idx] = res[1:]
+
+    d[d <= set_to_zero] = 0.0
+
+    return d
 
 # local worker
 def _desc_worker(_img, _feat, _box, _label):
@@ -325,7 +365,8 @@ def get_local_desc(img, desc, img_iterator, label, _ncpus=None):
     res = []
     with ProcessPoolExecutor(max_workers=_ncpus) as executor:
         for w_coords in img_iterator:
-             res.append(executor.submit(_desc_worker, img, desc, w_coords, label))
+            time.sleep(0.01)
+            res.append(executor.submit(_desc_worker, img, desc, w_coords, label))
 
     desc = []
     for f in as_completed(res):
@@ -338,7 +379,7 @@ def get_local_desc(img, desc, img_iterator, label, _ncpus=None):
 def desc_to_matrix(desc, label):
     """
     Converts a list of descriptors to a matrix representation, with one
-    sample per row.
+    sample per row. First 4 elements of each row contain the ROI coordinates.
 
     :param desc:
        list of descriptors, as returned by get_*_desc() functions
@@ -348,9 +389,32 @@ def desc_to_matrix(desc, label):
     """
 
     l = [d[label] for d in desc]
+    r = [d['roi'] for d in desc]
 
     if len(l) == 0:
         # no such descriptors
         return None
 
-    return np.array(l)
+    return np.hstack( (np.array(r), np.array(l)) )
+
+
+def matrix_to_desc(mtx, label):
+    """
+    Converts a matrix to a list of descriptors. It is supposed that the input matrix
+    was produced by (or conforms to the format output by) desc_to_matrix() function.
+    
+    :param mtx:
+        A numpy.ndarray with one descriptor per row.
+        
+    :param label:
+        The label of these descriptors.
+        
+    :return:
+        A list of descriptors.
+    """
+
+    desc = []
+    for i in np.arange(mtx.shape[0]):
+        desc.append({'roi': np.array(mtx[i,0:4], dtype=np.int), label: mtx[i,5:]})
+
+    return desc

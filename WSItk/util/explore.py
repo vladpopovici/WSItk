@@ -7,7 +7,7 @@ __author__ = 'vlad'
 __all__ = ['sliding_window', 'sliding_window_on_regions']
 
 import numpy as np
-
+import numpy.random as rnd 
 
 def sliding_window(image_shape, w_size, start=(0,0), step=(1,1)):
     """Yield sub-images of the given image.
@@ -102,3 +102,113 @@ def sliding_window_on_regions(image_shape, roi, w_size, step=(1,1)):
         yield (y0, y1, x0, x1)
 
 ## end sliding_window_on_regions
+
+
+def random_window(image_shape, w_size, n):
+    """Yield randomly placed sub-images of the given image.
+
+    Parameters
+    ----------
+    image_shape : tuple (nrows, ncols)
+        Image shape (img.shape).
+    w_size : tuple (width, height)
+        Window size as a pair of width and height values.
+    n : int
+        Number of sub-images to generate. If negative, then each call
+        will yield a new sub-image.
+
+    Returns
+    -------
+    random_window : generator
+        Generator yielding sub-images from the original image.
+        Data is not copied, rather a restricted view into the image
+        is returned. Any changes to the returned view will be propagated
+        to the original image.
+    """
+
+    img_h, img_w = image_shape
+
+    if w_size[0] < 2 or w_size[1] < 2:
+        raise ValueError('Window size too small.')
+    
+    if n < 0:
+        while True:
+            rs = rnd.random_integers(low=0, high=img_h-w_size[1])
+            cs = rnd.random_integers(low=0, high=img_w-w_size[0])
+            yield (rs, cs, rs+w_size[1], cs+w_size[0])
+    else:
+        while n > 0:
+            n -= 1
+            rs = rnd.random_integers(low=0, high=img_h-w_size[1])
+            cs = rnd.random_integers(low=0, high=img_w-w_size[0])
+            yield (rs, cs, rs+w_size[1], cs+w_size[0])
+            
+## end random_window
+
+
+
+def random_window_on_regions(image_shape, roi, w_size, n):
+    """Yield randomly placed sub-images of the given image.
+
+    Parameters
+    ----------
+    image_shape : tuple (nrows, ncols)
+        Image shape (img.shape).
+    roi : list
+        A list of regions of interest in the image: [(r_min, r_max, c_min, c_max),...]
+        with "row min", "row max", "column min" and "column max" coordinates.
+    w_size : tuple (width, height)
+        Window size as a pair of width and height values.
+    n : int
+        Number of sub-images to generate. If negative, then each call
+        will yield a new sub-image.
+
+    Returns
+    -------
+    random_window_on_regions : generator
+        Generator yielding sub-images from the original image.
+        Data is not copied, rather a restricted view into the image
+        is returned. Any changes to the returned view will be propagated
+        to the original image.
+    """
+
+    img_h, img_w = image_shape
+
+    if w_size[0] < 2 or w_size[1] < 2:
+        raise ValueError('Window size too small.')
+    
+    nr = len(roi)
+    if nr == 0:
+        raise ValueError('At least one ROI should be given.')
+    
+    # check the ROIs are large enough:
+    for r in range(len(roi)):
+        if roi[r][0] < 0 or roi[r][1] < 0 or roi[r][2] < 0 or roi[r][3] < 0:
+            # unsuitable roi:
+            del roi[r]
+        if roi[r][0] >= img_h or roi[r][1] >= img_h or roi[r][2] >= img_w or roi[r][3] >= img_w:
+            # unsuitable roi:
+            del roi[r]
+        if roi[r][1] - roi[r][0] <= w_size[1] or roi[r][3] - roi[r][2] <= w_size[0]:
+            # unsuitable roi:
+            del roi[r]
+            
+    nr = len(roi)
+    if nr == 0:
+        raise ValueError('No suitable ROIs found.')
+    
+    if n < 0:
+        while True:
+            r = rnd.random_integers(low=0, high=nr-1)   # randomly select a ROI
+            rs = rnd.random_integers(low=roi[r][0], high=roi[r][1]-w_size[1])
+            cs = rnd.random_integers(low=roi[r][2], high=roi[r][3]-w_size[0])
+            yield (rs, cs, rs+w_size[1], cs+w_size[0])
+    else:
+        while n > 0:
+            n -= 1
+            r = rnd.random_integers(low=0, high=nr-1)   # randomly select a ROI
+            rs = rnd.random_integers(low=roi[r][0], high=roi[r][1]-w_size[1])
+            cs = rnd.random_integers(low=roi[r][2], high=roi[r][3]-w_size[0])
+            yield (rs, cs, rs+w_size[1], cs+w_size[0])
+            
+## end random_window_on_regions

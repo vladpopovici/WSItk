@@ -4,38 +4,32 @@ DESCRIPTORS.TXTGREY: textural descriptors from grey-scale images.
 """
 from __future__ import (absolute_import, division, print_function, unicode_literals)
 
-__version__ = 0.01
+__version__ = 0.05
 __author__ = 'Vlad Popovici'
 
 from abc import ABCMeta, abstractmethod
 
 import numpy as np
 from numpy import dot
+from matplotlib.cbook import flatten
 
 from scipy import ndimage as nd
 from scipy.linalg import norm
 from scipy.stats import entropy
 from scipy.signal import convolve2d
 
-from skimage.filter import gabor_kernel
+from skimage.filters import gabor_kernel
 from skimage.util import img_as_float
 from skimage.feature.texture import greycoprops, greycomatrix,\
     local_binary_pattern
 from skimage.exposure import rescale_intensity
 from skimage.feature import hog
+from skimage.transform import integral_image
 
-## A base class for textural descriptors.
-class TexturalDescriptors:
-    __metaclass__= ABCMeta
-    @abstractmethod
-    def compute(self, image):
-        pass
-    
-    @abstractmethod
-    def dist(self, ft1, ft2, method=None):
-        pass
-    
-class GaborDescriptors(TexturalDescriptors):
+from .basic import *
+
+
+class GaborDescriptor(LocalDescriptor):
     """
     Computes Gabor descriptors from an image. These descriptors are the means 
     and variances of the filter responses obtained by convolving an image with 
@@ -84,22 +78,26 @@ class GaborDescriptors(TexturalDescriptors):
             numpy.ndarray (vector) containing the Gabor descriptors (means followed
             by the variances of the filter responses)
         """
-        image = img_as_float(image)
-        nk = len(self.kernels_)
-        ft = np.zeros(2*nk, dtype=np.double)
-        for k, krn in enumerate(self.kernels_):
-            flt = nd.convolve(image, krn, mode='wrap')
-            ft[k] = flt.mean()
-            ft[k+nk] = flt.var()
+        try:
+            image = img_as_float(image)
+            nk = len(self.kernels_)
+            ft = np.zeros(2*nk, dtype=np.double)
+            for k, krn in enumerate(self.kernels_):
+                flt = nd.convolve(image, krn, mode='wrap')
+                ft[k] = flt.mean()
+                ft[k+nk] = flt.var()
+        except:
+            print("Error in GaborDescriptor.compute()")
+
         
         return ft
     
     @staticmethod
-    def dist(ft1, ft2, method='Euclidean'):
+    def dist(ft1, ft2, method='euclidean'):
         """
         Compute the distance between two sets of Gabor features. Possible distance types
         are:
-            -Euclidean
+            -euclidean
             -cosine distance: this is not a proper distance! 
         
         """
@@ -116,7 +114,7 @@ class GaborDescriptors(TexturalDescriptors):
 ## end class GaborDescriptors
 
 
-class GLCMDescriptors(TexturalDescriptors):
+class GLCMDescriptor(LocalDescriptor):
     """
     Grey Level Co-occurrence Matrix: the image is decomposed into a number of
     non-overlapping regions, and the GLCM features are computed on each of these
@@ -132,7 +130,7 @@ class GLCMDescriptors(TexturalDescriptors):
             window size: the image is decomposed into small non-overlapping regions of size
             <wsize x wsize> from which the GLCMs are computed. If the last region in a row or
             the last row in an image are smaller than the required size, then they are not
-            used in computing
+            used in computing the features.
 
             dist: uint
             pair distance
@@ -248,7 +246,7 @@ class GLCMDescriptors(TexturalDescriptors):
 ## end class GLCMDescriptors
 
 
-class LBPDescriptors(TexturalDescriptors):
+class LBPDescriptor(LocalDescriptor):
     """
     Local Binary Pattern for texture description. A LBP descriptor set is a 
     histogram of LBPs computed from the image.
@@ -281,9 +279,12 @@ class LBPDescriptors(TexturalDescriptors):
         Compute the LBP features. These features are returned as histograms of 
         LBPs.
         """
-        lbp = local_binary_pattern(image, self.npoints_, self.radius_, self.method_)
-        hist, _ = np.histogram(lbp, normed=True, bins=self.nhbins_, range=(0, self.nhbins_))
-        
+        try:
+            lbp = local_binary_pattern(image, self.npoints_, self.radius_, self.method_)
+            hist, _ = np.histogram(lbp, normed=True, bins=self.nhbins_, range=(0, self.nhbins_))
+        except:
+            print("Error in LBPDescriptor.compute()")
+
         return hist
     
 
@@ -323,7 +324,7 @@ class LBPDescriptors(TexturalDescriptors):
 
 
 # MFSDescriptors - Multi-Fractal Dimensions 
-class MFSDescriptors(TexturalDescriptors):
+class MFSDescriptor(LocalDescriptor):
     """
     Multi-Fractal Dimensions for texture description. 
     
@@ -495,7 +496,7 @@ class MFSDescriptors(TexturalDescriptors):
 # end class MFSDescriptors        
 
 
-class HOGDescriptors(TexturalDescriptors):
+class HOGDescriptor(LocalDescriptor):
     """
     Provides local descriptors in terms of histograms of oriented gradients.
     """
@@ -555,7 +556,7 @@ class HOGDescriptors(TexturalDescriptors):
 # end HOGDescriptors
 
 
-class HistDescriptors(TexturalDescriptors):
+class HistDescriptor(LocalDescriptor):
     """
     Provides local descriptors in terms of histograms of grey levels.
     """
@@ -577,7 +578,7 @@ class HistDescriptors(TexturalDescriptors):
 
     def compute(self, image):
         """
-        Computes the historgam on a given image.
+        Computes the histogram on a given image.
 
         :param image: numpy.ndarray
 
@@ -622,3 +623,186 @@ class HistDescriptors(TexturalDescriptors):
 
         return dm[method](ft1, ft2)
 # end HistDescriptors
+
+        
+# Haar-like descriptors
+class HaarLikeDescriptor(LocalDescriptor):
+    """
+    Provides local descriptors in terms of respones to a series of Haar-like
+    features [1]_.
+
+    The coding is inspired by HaarLikeFeature class from SimpleCV (www.simplecv.org).
+
+    .. [1] http://en.wikipedia.org/wiki/Haar-like_features
+    """
+    def __init__(self, _haars):
+        """
+        Initialize an HaarLikeDescriptors object.
+
+        :param _haars: list
+          a list of feature descriptors. A feature descriptor is a list of points (row, column) in a normalized
+          coordinate system ((0,0) -> (1,1)) describing the "positive" (black) patches from a Haar-like
+          feature. All the patches not specified in this list are considered "negative" (white).
+          The value corresponding to such a feature is the (weighted) sum of pixel intensities covered by
+          "positive" patches from which the (weighted) sum of pixel intensities covered by "negative" patches
+          is subtracted.
+
+        See some examples at:
+        - http://www.codeproject.com/Articles/27125/Ultra-Rapid-Object-Detection-in-Computer-Vision-Ap
+        - http://en.wikipedia.org/wiki/Haar-like_features
+
+        Examples of Haar-like features coding:
+
+        - a Haar-like feature in which the left side is "positive" (*) and the right side "negative" (.):
+          +-------+-------+
+          |*******|.......|
+          |*******|.......|
+          |*******|.......|
+          |*******|.......|
+          |*******|.......|
+          |*******|.......|
+          +-------+-------+
+          The corresponding coding is: [[(0.0, 0.0), (0.5, 1.0)]].
+
+        - a Haar-like feature with diagonal "positive" (*) patches:
+          +-------+-------+
+          |*******|.......|
+          |*******|.......|
+          |*******|.......|
+          +-------+-------+
+          |.......|*******|
+          |.......|*******|
+          |.......|*******|
+          +-------+-------+
+          The corresponding coding is: [[(0.0, 0.0), (0.5, 0.5)], [(0.5, 0.5), (1.0, 1.0)]].
+
+
+        """
+        self.haars = _haars
+        self.nfeats = len(_haars)
+        self.pp = np.ones(self.nfeats, dtype=np.float) - 0.5   # will store the proportion of positive pixels
+
+        # Check that all coordinates are between 0 and 1:
+        if any([_p < 0.0 or _p > 1.0 for _p in flatten(_haars)]):
+            raise ValueError("Improper Haar feature specification.")
+        
+        # To determine the fraction of positive features, we will use an artificial
+        # image containing only 1s:
+        im = np.ones((100,100))   # should provide enough precision for most configurations
+        im = integral_image(im)
+        f = self.compute(im, _norm=False) # now f contains the differences in area of the positive and negative patches
+        for i in range(f.size):
+            self.pp[i] = 0.5 + f[i] / 20000.0  # / 2*area(im)
+
+        return
+
+
+    def compute(self, image, _norm=True):
+        """
+        Computes the Haar-like descriptors on an INTEGRAL image.
+
+        :param image: numpy.ndarray
+        This must be the integral image, as computed by skimage.transform.integral_image(),
+        for example. This format does not contain the first row and column of 0s.
+
+        :param _norm: boolean
+        If True, the features are normalized by half the number of pixels in the image.
+
+        :return: numpy.ndarray
+          a vector of feature values (one per Haar-like feature)
+        """
+        
+        if image.ndim != 2:
+            raise ValueError("Only grey-level images are supported")
+
+        h, w = image.shape
+
+        # add the 1st column and row as 0s:
+        # np.pad was failing with "TypeError: 'unicode' object is not callable"??
+        # image = np.pad(image, ((1,0),(1,0)), mode="constant", constant_values=0)
+        im_tmp = np.zeros((h+1, w+1))
+        im_tmp[1:,1:] = image
+        image = im_tmp
+        im_tmp = None
+        
+        f = np.zeros(self.nfeats, dtype=np.float)
+        i = 0
+        
+        for hr in self.haars:                # for each Haar-like feature
+            S = 0L                           # will contain the sum of positive patches in the feature
+            
+            # test some degenerated cases:
+            if np.isclose(self.pp[i], 0.0, atol=1e-7):
+                # basically, there are no "positive" regions:
+                f[i] = -1 if _norm else -image[h,w]
+                i += 1
+                continue
+            if np.isclose(self.pp[i], 1.0, atol=1e-7):
+                # basically, there are no "negative" regions:
+                f[i] = 1 if _norm else image[h,w]
+                i += 1
+                continue
+            
+            for p in hr:                     # for each patch in the current feature
+                a, b = p                      # coords of the corners of the patch
+                row_a, col_a = (np.asarray(a) * np.asarray([h,w])).astype(np.int)
+                row_b, col_b = (np.asarray(b) * np.asarray([h,w])).astype(np.int)
+                S += image[row_b, col_b] + image[row_a, col_a] - image[row_b, col_a] - image[row_a, col_b]
+            # The final value of the Haar-like feature is the sum of positive patches minus
+            # the sum of negative patches. Since everything that is not specified as positive
+            # patch is considered negative, the sum of the negative patches is the total sum
+            # in the image (corner bottom-right in the integral image) minus the sum of positive
+            # ones. Hence, the value of the Haar-like feature is 2*S - image[h,w]:
+            if _norm:
+                f[i] = (S - self.pp[i]*image[h,w]) / (h*w*self.pp[i]*(1-self.pp[i]))
+            else:
+                f[i] = 2.0*S - image[h, w]
+                
+            i += 1
+
+        return f
+
+
+
+    @staticmethod
+    def dist(ft1, ft2, method='euclidean'):
+        """
+        Computes the distance between two Haar-like feature vectors.
+
+        :param ft1: a vector of features
+        :type ft1: numpy.array (1xn)
+        :param ft2: a vector of features
+        :type ft2: numpy.array (1xn)
+        :param method: the method for computing the distance
+        :type method: string
+        :return: a distance
+        :rtype: float
+        """
+
+        dm = {'euclidean' : lambda x_, y_: norm(x_-y_),
+              'cosine': lambda x_, y_: dot(x_, y_) / (norm(x_)*norm(y_))
+              }
+        method = method.lower()
+        if method not in dm.keys():
+            raise ValueError('Unknown method')
+
+        return dm[method](ft1, ft2)
+
+
+    @staticmethod
+    def haars1():
+        """
+        Generates a list of Haar-like feature specifications.
+        :return:
+        :rtype:
+        """
+        h = [
+            [[(0.0, 0.0), (0.5, 0.5)], [(0.5, 0.5), (1.0, 1.0)]], # diagonal blocks
+            [[(0.0, 0.0), (1.0, 0.5)]],                           # vertical edge
+            [[(0.0, 0.0), (0.5, 1.0)]],                           # horizontal edge
+            [[(0.0, 0.33), (1.0, 0.67)]],                         # vertical central band
+            [[(0.33, 0.0), (0.67, 1.0)]],                         # horizontal central band
+            [[(0.25, 0.25), (0.75, 0.75)]]
+        ]
+        
+        return h

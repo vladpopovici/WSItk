@@ -13,7 +13,7 @@ import argparse as opt
 # from xml.dom import minidom
 
 from descriptors.extract import get_gabor_desc
-from descriptors.txtgrey import GaborDescriptors
+from descriptors.txtgrey import GaborDescriptor
 from util.intensity import requantize
 from stain.he import rgb2he
 from segm.tissue import tissue_region_from_rgb
@@ -63,7 +63,7 @@ def main():
     img_h          = requantize(img_h, nlevels=n_grey_levels, method='linear')
     img_e          = requantize(img_e, nlevels=n_grey_levels, method='linear')
 
-    G = GaborDescriptors()
+    G = GaborDescriptor()
     if args.mask:
         mask, _ = tissue_region_from_rgb(img, _min_area=150)
         g_h = get_gabor_desc(img_h, G, w_size, scale, mask)
