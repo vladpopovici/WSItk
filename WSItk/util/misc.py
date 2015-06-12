@@ -25,8 +25,7 @@ def intg_image(image):
     if image.ndim != 2:
         raise ValueError('The image must be single channel.')
 
-    image = np.pad(integral_image(image), ((1,0),(1,0)),
-                   mode=nstr(b'constant'), constant_values=0)
+    image = np.pad(integral_image(image), ((1,0),(1,0)), mode=nstr(b'constant'), constant_values=0)
 
     return image
 # end intg_image
