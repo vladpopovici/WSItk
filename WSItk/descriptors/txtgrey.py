@@ -7,7 +7,10 @@ from __future__ import (absolute_import, division, print_function, unicode_liter
 __version__ = 0.05
 __author__ = 'Vlad Popovici'
 
-from abc import ABCMeta, abstractmethod
+__all__ = ['GaborDescriptor', 'LBPDescriptor', 'GLCMDescriptor', 'HOGDescriptor',
+           'HistDescriptor', 'HaarLikeDescriptor', 'MFSDescriptor']
+
+#from abc import ABCMeta, abstractmethod
 
 import numpy as np
 from numpy import dot
@@ -24,7 +27,7 @@ from skimage.feature.texture import greycoprops, greycomatrix,\
     local_binary_pattern
 from skimage.exposure import rescale_intensity
 from skimage.feature import hog
-from skimage.transform import integral_image
+#from skimage.transform import integral_image
 
 from .basic import *
 
@@ -88,7 +91,6 @@ class GaborDescriptor(LocalDescriptor):
                 ft[k+nk] = flt.var()
         except:
             print("Error in GaborDescriptor.compute()")
-
         
         return ft
     
@@ -635,7 +637,7 @@ class HaarLikeDescriptor(LocalDescriptor):
 
     .. [1] http://en.wikipedia.org/wiki/Haar-like_features
     """
-    def __init__(self, _haars):
+    def __init__(self, _haars, _norm=True):
         """
         Initialize an HaarLikeDescriptors object.
 
@@ -676,28 +678,22 @@ class HaarLikeDescriptor(LocalDescriptor):
           +-------+-------+
           The corresponding coding is: [[(0.0, 0.0), (0.5, 0.5)], [(0.5, 0.5), (1.0, 1.0)]].
 
+          :param _norm: boolean
+            Should the features be normalized? (scale-independent?) Default: True
+
 
         """
         self.haars = _haars
         self.nfeats = len(_haars)
-        self.pp = np.ones(self.nfeats, dtype=np.float) - 0.5   # will store the proportion of positive pixels
+        self.norm = _norm
 
         # Check that all coordinates are between 0 and 1:
         if any([_p < 0.0 or _p > 1.0 for _p in flatten(_haars)]):
             raise ValueError("Improper Haar feature specification.")
-        
-        # To determine the fraction of positive features, we will use an artificial
-        # image containing only 1s:
-        im = np.ones((100,100))   # should provide enough precision for most configurations
-        im = integral_image(im)
-        f = self.compute(im, _norm=False) # now f contains the differences in area of the positive and negative patches
-        for i in range(f.size):
-            self.pp[i] = 0.5 + f[i] / 20000.0  # / 2*area(im)
 
         return
 
-
-    def compute(self, image, _norm=True):
+    def compute(self, image):
         """
         Computes the Haar-like descriptors on an INTEGRAL image.
 
@@ -716,53 +712,37 @@ class HaarLikeDescriptor(LocalDescriptor):
             raise ValueError("Only grey-level images are supported")
 
         h, w = image.shape
+        h -= 1
+        w -= 1
+        nrm_fact = h*w if self.norm else 1.0
 
-        # add the 1st column and row as 0s:
-        # np.pad was failing with "TypeError: 'unicode' object is not callable"??
-        # image = np.pad(image, ((1,0),(1,0)), mode="constant", constant_values=0)
-        im_tmp = np.zeros((h+1, w+1))
-        im_tmp[1:,1:] = image
-        image = im_tmp
-        im_tmp = None
-        
         f = np.zeros(self.nfeats, dtype=np.float)
         i = 0
-        
+
+        S0 = image[h, w] + image[0, 0] - image[h, 0] - image[0, w]  # integral over the image
+
         for hr in self.haars:                # for each Haar-like feature
             S = 0L                           # will contain the sum of positive patches in the feature
             
-            # test some degenerated cases:
-            if np.isclose(self.pp[i], 0.0, atol=1e-7):
-                # basically, there are no "positive" regions:
-                f[i] = -1 if _norm else -image[h,w]
-                i += 1
-                continue
-            if np.isclose(self.pp[i], 1.0, atol=1e-7):
-                # basically, there are no "negative" regions:
-                f[i] = 1 if _norm else image[h,w]
-                i += 1
-                continue
-            
             for p in hr:                     # for each patch in the current feature
                 a, b = p                      # coords of the corners of the patch
-                row_a, col_a = (np.asarray(a) * np.asarray([h,w])).astype(np.int)
-                row_b, col_b = (np.asarray(b) * np.asarray([h,w])).astype(np.int)
+                row_a = np.int(np.floor(p[0][0] * h))
+                col_a = np.int(np.floor(p[0][1] * w))
+                row_b = np.int(np.floor(p[1][0] * h))
+                col_b = np.int(np.floor(p[1][1] * w))
+
                 S += image[row_b, col_b] + image[row_a, col_a] - image[row_b, col_a] - image[row_a, col_b]
             # The final value of the Haar-like feature is the sum of positive patches minus
             # the sum of negative patches. Since everything that is not specified as positive
             # patch is considered negative, the sum of the negative patches is the total sum
             # in the image (corner bottom-right in the integral image) minus the sum of positive
-            # ones. Hence, the value of the Haar-like feature is 2*S - image[h,w]:
-            if _norm:
-                f[i] = (S - self.pp[i]*image[h,w]) / (h*w*self.pp[i]*(1-self.pp[i]))
-            else:
-                f[i] = 2.0*S - image[h, w]
+            # ones. Hence, the value of the Haar-like feature is 2*S - S0
+
+            f[i] = (2.0*S - S0) / nrm_fact
                 
             i += 1
 
         return f
-
-
 
     @staticmethod
     def dist(ft1, ft2, method='euclidean'):
@@ -788,7 +768,6 @@ class HaarLikeDescriptor(LocalDescriptor):
 
         return dm[method](ft1, ft2)
 
-
     @staticmethod
     def haars1():
         """
@@ -797,11 +776,11 @@ class HaarLikeDescriptor(LocalDescriptor):
         :rtype:
         """
         h = [
-            [[(0.0, 0.0), (0.5, 0.5)], [(0.5, 0.5), (1.0, 1.0)]], # diagonal blocks
-            [[(0.0, 0.0), (1.0, 0.5)]],                           # vertical edge
-            [[(0.0, 0.0), (0.5, 1.0)]],                           # horizontal edge
-            [[(0.0, 0.33), (1.0, 0.67)]],                         # vertical central band
-            [[(0.33, 0.0), (0.67, 1.0)]],                         # horizontal central band
+            [[(0.0, 0.0), (0.5, 0.5)], [(0.5, 0.5), (1.0, 1.0)]],  # diagonal blocks
+            [[(0.0, 0.0), (1.0, 0.5)]],                            # vertical edge
+            [[(0.0, 0.0), (0.5, 1.0)]],                            # horizontal edge
+            [[(0.0, 0.33), (1.0, 0.67)]],                          # vertical central band
+            [[(0.33, 0.0), (0.67, 1.0)]],                          # horizontal central band
             [[(0.25, 0.25), (0.75, 0.75)]]
         ]
         

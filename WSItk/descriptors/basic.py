@@ -12,13 +12,14 @@ class LocalDescriptor:
     Base class for all local descriptors: given a patch of the image, compute
     some feature vector.
     """
-    __metaclass__= ABCMeta
+    __metaclass__ = ABCMeta
+
     @abstractmethod
     def compute(self, image):
         pass
 
     @abstractmethod
-    def dist(self, ft1, ft2, method=None):
+    def dist(self, ft1, ft2, method='none'):
         pass
 # end class LocalDescriptor
 

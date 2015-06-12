@@ -47,7 +47,6 @@ def sliding_window(image_shape, w_size, start=(0,0), step=(1,1)):
     top_left_corners = zip(x.reshape((-1,)).tolist(),
                            y.reshape((-1,)).tolist())
 
-
     for x0, y0 in top_left_corners:
         x1, y1 = x0 + w_size[0], y0 + w_size[1]
         yield (y0, y1, x0, x1)
@@ -130,18 +129,20 @@ def random_window(image_shape, w_size, n):
 
     if w_size[0] < 2 or w_size[1] < 2:
         raise ValueError('Window size too small.')
+    if w_size[0] > img_w or w_size[1] > img_h:
+        raise StopIteration()
     
     if n < 0:
         while True:
             rs = rnd.random_integers(low=0, high=img_h-w_size[1])
             cs = rnd.random_integers(low=0, high=img_w-w_size[0])
-            yield (rs, cs, rs+w_size[1], cs+w_size[0])
+            yield (rs, rs+w_size[1], cs, cs+w_size[0])
     else:
         while n > 0:
             n -= 1
             rs = rnd.random_integers(low=0, high=img_h-w_size[1])
             cs = rnd.random_integers(low=0, high=img_w-w_size[0])
-            yield (rs, cs, rs+w_size[1], cs+w_size[0])
+            yield (rs, rs+w_size[1], cs, cs+w_size[0])
             
 ## end random_window
 
@@ -180,6 +181,9 @@ def random_window_on_regions(image_shape, roi, w_size, n):
     nr = len(roi)
     if nr == 0:
         raise ValueError('At least one ROI should be given.')
+
+    if w_size[0] > img_w or w_size[1] > img_h:
+        raise StopIteration()
     
     # check the ROIs are large enough:
     for r in range(len(roi)):
@@ -202,13 +206,13 @@ def random_window_on_regions(image_shape, roi, w_size, n):
             r = rnd.random_integers(low=0, high=nr-1)   # randomly select a ROI
             rs = rnd.random_integers(low=roi[r][0], high=roi[r][1]-w_size[1])
             cs = rnd.random_integers(low=roi[r][2], high=roi[r][3]-w_size[0])
-            yield (rs, cs, rs+w_size[1], cs+w_size[0])
+            yield (rs, rs+w_size[1], cs, cs+w_size[0])
     else:
         while n > 0:
             n -= 1
             r = rnd.random_integers(low=0, high=nr-1)   # randomly select a ROI
             rs = rnd.random_integers(low=roi[r][0], high=roi[r][1]-w_size[1])
             cs = rnd.random_integers(low=roi[r][2], high=roi[r][3]-w_size[0])
-            yield (rs, cs, rs+w_size[1], cs+w_size[0])
+            yield (rs, rs+w_size[1], cs, cs+w_size[0])
             
 ## end random_window_on_regions
