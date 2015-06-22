@@ -7,7 +7,8 @@ from __future__ import (absolute_import, division, print_function, unicode_liter
 
 __version__ = 0.01
 __author__ = 'Vlad Popovici'
-
+__all__ = ['tissue_region_from_rgb', 'tissue_fat', 'tissue_chromatin', 'tissue_connective',
+           'tissue_components', 'superpixels']
 
 import numpy as np
 
@@ -59,8 +60,8 @@ def tissue_region_from_rgb(_img, _min_area=150, _g_th=None):
     mask = _G(_img) < _g_th
 
     skm.binary_closing(mask, skm.disk(3), out=mask)
-    
-    skm.remove_small_objects(mask, min_size=_min_area, in_place=True)
+    mask = img_as_bool(mask)
+    mask = skm.remove_small_objects(mask, min_size=_min_area, in_place=True)
 
 
     # Some hand-picked rules:

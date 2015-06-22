@@ -9,7 +9,7 @@ import numpy as np
 
 import skimage as ski
 from skimage import segmentation
-from skimage import filter
+from skimage import filters
 
 
 # BOUNDING_BOX
