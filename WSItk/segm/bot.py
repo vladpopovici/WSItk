@@ -8,7 +8,7 @@ from __future__ import (absolute_import, division, print_function, unicode_liter
 __version__ = 0.01
 __author__ = 'Vlad Popovici'
 __all__ = ['grow_bag_from_new_image', 'grow_bag_with_new_features',
-           'grow_bag_from_images']
+           'grow_bag_from_images', 'read_bag']
 
 import numpy as np
 
@@ -191,8 +191,57 @@ def grow_bag_from_images(img_list, desc_list, w_size, img_n):
     return big_bag
 
 
+def read_bag(infile, desc_name):
+    """
+    Read a bag of features from an external file. It is assumed that the
+    file contains values corresponding to a single type of descriptors,
+    since no information distinguishing the descriptors is stored in the
+    file.
+    
+    :param infile: string
+        file name
+    :param desc_name: string
+        the name of the descriptor whose values are read
+    :return: dict
+        a bag of features with 'regs' and <desc_name> keys
+    """
 
-def build_codebook_kmeans_online(bag, codebook_size):
+    with open(infile, 'r') as f:
+        x = np.loadtxt(f)
+
+    # x contains, as a matrix, all the local deascriptors, supposedly of the
+    # same type. The following data is in x:
+    # -first 4 columns in x correspond to the rectangular region on which
+    #  the feature was computed
+    # -the ramaining columns correspond to descriptor values
+    # -each row corresponds to a patch in the image (at coordinates given
+    #  by the first 4 values)
+    ndesc, nfeat = x.shape
+    nfeat -= 4  # first 4 values are coords
+
+    # put everything in a regular B-o-T dictionary (as above):
+    regs = []
+    desc = []
+    for i in range(ndesc):
+        regs.append(np.int32(x[i, 0:4]))
+        desc.append(x[i, 4:])
+
+    return {desc_name: desc, 'regs': regs}
+
+
+def build_codebook_kmeans_online(bag, codebook_size, desc_names, standardize=False):
     rng = np.random.RandomState(0)
     vq = MiniBatchKMeans(n_clusters=code_book_size, random_state=rng)  # vector quantizer
-    X = np.array(bag[0])  # put all feature vectors in an array
+
+    regs = bag.pop('regs')
+    desc = [np.array(bag[dn_]) for dn_ in desc_names]                  # ensures a strict ordring
+
+    X = np.hstack(desc)                                                # put all feature vectors in an array
+    if standardize:
+        # make sure each variable (column) is mean-centered and has unit standard deviation
+        Xm = np.mean(X, axis=0)
+        Xs = np.std(X, axis=0)
+        Xs[np.isclose(Xs, 1e-16)] = 1.0
+        for j in range(X.shape[1]):
+            X[,j] = (X[,j] - Xm[j]) / Xs[j]
+            
