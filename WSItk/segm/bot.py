@@ -4,11 +4,12 @@ SEGM.BOT: bag-of-things related functions.
 @author: vlad
 """
 from __future__ import (absolute_import, division, print_function, unicode_literals)
+from builtins import *
 
 __version__ = 0.01
 __author__ = 'Vlad Popovici'
 __all__ = ['grow_bag_from_new_image', 'grow_bag_with_new_features',
-           'grow_bag_from_images', 'read_bag']
+           'grow_bag_from_images', 'read_bag', 'build_codebook_kmeans_online']
 
 import numpy as np
 
@@ -20,7 +21,7 @@ from util.explore import random_window_on_regions, random_window, \
     sliding_window, sliding_window_on_regions
 from util.misc import intg_image
 from descriptors.txtgrey import HaarLikeDescriptor
-
+from ml.gap import gap
 
 def grow_bag_from_new_image(image, desc, w_size, n_obj, **kwargs):
     """
@@ -230,10 +231,6 @@ def read_bag(infile, desc_name):
 
 
 def build_codebook_kmeans_online(bag, codebook_size, desc_names, standardize=False):
-    rng = np.random.RandomState(0)
-    vq = MiniBatchKMeans(n_clusters=code_book_size, random_state=rng)  # vector quantizer
-
-    regs = bag.pop('regs')
     desc = [np.array(bag[dn_]) for dn_ in desc_names]                  # ensures a strict ordring
 
     X = np.hstack(desc)                                                # put all feature vectors in an array
@@ -242,6 +239,18 @@ def build_codebook_kmeans_online(bag, codebook_size, desc_names, standardize=Fal
         Xm = np.mean(X, axis=0)
         Xs = np.std(X, axis=0)
         Xs[np.isclose(Xs, 1e-16)] = 1.0
-        for j in range(X.shape[1]):
-            X[,j] = (X[,j] - Xm[j]) / Xs[j]
+        X = (X - Xm) / Xs
+    
+    if codebook_size is None:
+        # try to estimate a suitable codebook size based on gap statistic:
+        codebook_size,_ = gap(X, Ks=np.linspace(start=10, stop=100, num=10, dtype=np.int32),
+                              Wstar=None, B=20)
+        print("Best codebook size:", codebook_size)
             
+    rng = np.random.RandomState(0)
+    vq = MiniBatchKMeans(n_clusters=codebook_size, random_state=rng,
+                         batch_size=500, compute_labels=True, verbose=True)   # vector quantizer
+
+    vq.fit(X)
+    
+    return vq
