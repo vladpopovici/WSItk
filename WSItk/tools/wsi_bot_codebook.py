@@ -36,7 +36,7 @@ def main():
     args = p.parse_args()
     cfg_file = args.config
 
-    parser = SafeConfigParser        ()
+    parser = SafeConfigParser()
     parser.read(cfg_file)
     
     if not parser.has_section('codebook'):
@@ -57,23 +57,26 @@ def main():
     # Read the various features:
     big_bag = {}
     
-    for desc_name in ['gabor', 'haar', 'intensity']:
+    for desc_name in ['gabor', 'haar', 'identity', 'stats', 'hist', 'hog', 'lbp']:
         if not parser.has_option('codebook', desc_name):
             continue
+        feat_files = []
         with open(parser.get_option('codebook', desc_name), 'r') as f:
             feat_files = f.readlines()
-        for f in feat_file:
+
+        desc_values = []               # all values for this descriptor will be concatenated in a single list
+        for f in feat_files:
             f = f.strip()
             if len(f) == 0:
                 continue
-            bag = read_bag(f, desc_name) 
-            if big_bag.has_key(desc_name):
-                big_bag[desc_name].extend(bag[desc_name])
-            else:
-                big_bag[desc_name] = bag[desc_name]
+            bag = read_bag(f, desc_name)
+            desc_values.extend(bag[desc_name])
+
+        big_bag[desc_name] = desc_values
         
-        
+    return big_bag
+
+
+## MAIN
 if __name__ == '__main__':
     main()
-    
-    

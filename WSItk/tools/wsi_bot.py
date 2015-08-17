@@ -4,6 +4,7 @@ TOOLS.WSI_BOT: bag-of-things from an image series.
 @author: vlad
 """
 from __future__ import (absolute_import, division, print_function, unicode_literals)
+from builtins import *
 
 __version__ = 0.1
 __author__ = 'Vlad Popovici'
