@@ -56,13 +56,18 @@ def main():
         
     # Read the various features:
     big_bag = {}
-    
+    img_names = []                     # for each region, the image it belongs to
+    all_regs = []                      # all regions
+
     for desc_name in ['gabor', 'haar', 'identity', 'stats', 'hist', 'hog', 'lbp']:
         if not parser.has_option('codebook', desc_name):
             continue
         feat_files = []
         with open(parser.get_option('codebook', desc_name), 'r') as f:
             feat_files = f.readlines()
+
+        if len(feat_files) == 0:
+            raise UserWarning('No files specified for ' + desc_name + ' feature.')
 
         desc_values = []               # all values for this descriptor will be concatenated in a single list
         for f in feat_files:
@@ -71,9 +76,20 @@ def main():
                 continue
             bag = read_bag(f, desc_name)
             desc_values.extend(bag[desc_name])
+            if len(big_bag) == 0:
+                # since the image names and regions are the same (in the same order too) for all
+                # feature types (gabor, haar,...) it makes sense to add them only once, when the "big_bag"
+                # is still empty (for the 1st feature type read)
+                img_names.extend(f * len(bag[desc_name]))  # for each feature, add the image name
+                all_regs.extend(bag['regs'])
+
+        if len(big_bag) == 0:
+            # 1st time store some values:
+            big_bag['regs'] = all_regs
+            big_bag['fname'] = img_names
 
         big_bag[desc_name] = desc_values
-        
+
     return big_bag
 
 

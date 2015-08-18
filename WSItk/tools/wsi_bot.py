@@ -215,7 +215,7 @@ def main():
             print('(computing mask)...', end='')
             mask, _ = tissue_region_from_rgb(im, _min_area=500)
         
-        row_min, col_min, row_max, col_max =  bounding_box(mask)
+        row_min, col_min, row_max, col_max = bounding_box(mask)
         im_h[np.logical_not(mask)] = 0                       # make sure background is 0
         mask = None
         im = None
