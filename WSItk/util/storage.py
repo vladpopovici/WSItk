@@ -11,8 +11,9 @@ From http://code.activestate.com/recipes/576642/
 
 import pickle, json, csv, os, shutil
 
+
 class ModelPersistence(dict):
-    ''' Persistent dictionary with an API compatible with shelve and anydbm.
+    """ Persistent dictionary with an API compatible with shelve and anydbm.
 
     The dict is kept in memory, so the dictionary operations run as fast as
     a regular dictionary.
@@ -22,8 +23,7 @@ class ModelPersistence(dict):
     Input file format is automatically discovered.
     Output file format is selectable between pickle, json, and csv.
     All three serialization formats are backed by fast C implementations.
-
-    '''
+    """
 
     def __init__(self, filename, flag='c', mode=None, format='pickle', *args, **kwds):
         self.flag = flag                    # r=readonly, c=create, or n=new

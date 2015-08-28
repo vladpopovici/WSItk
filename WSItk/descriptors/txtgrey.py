@@ -110,7 +110,7 @@ class GaborDescriptor(LocalDescriptor):
               'cosine': lambda x_, y_: dot(x_, y_) / (norm(x_) * norm(y_))
               }
         method = method.lower()
-        if method not in dm.keys():
+        if method not in dm:
             raise ValueError('Unknown method')
 
         return dm[method](ft1, ft2)

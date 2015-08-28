@@ -43,7 +43,7 @@ def gap(X, Ks, Wstar=None, B=0):
 
     mins, maxes = np.min(X, axis = 0), np.max(X, axis = 0)
     Ks = np.array(Ks)
-    Ks.sort()                                    # make sure they are sorted incresingly
+    Ks.sort()                                    # make sure they are sorted increasingly
     nk = Ks.size
     
     K_max = Ks.max()                             # maximum number of clusters

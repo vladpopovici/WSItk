@@ -79,7 +79,7 @@ def main():
             tmp = parser.getboolean('haar', 'norm')
         if len(parser.items('haar')) == 0:
             # empty section, use defaults
-            desc = HaarLikeDescriptor(HaarLikeDescriptor.haars1())
+            h = HaarLikeDescriptor(HaarLikeDescriptor.haars1())
         else:
             h = HaarLikeDescriptor([ast.literal_eval(v) for n, v in parser.items('haar')
                                     if n.lower() != 'norm'],
@@ -202,7 +202,7 @@ def main():
             raise ValueError('Input image must be RGB.')
         
         # detect object region:
-        #-try to load a precomputed mask:
+        # -try to load a precomputed mask:
         mask_file_name = data_path+'/mask/'+ \
             os.path.splitext(os.path.split(img_name)[1])[0]+ \
             '_tissue_mask.pbm'
@@ -229,7 +229,6 @@ def main():
                 bag = grow_bag_from_new_image(im_h, d, wnd_size, nwindows, discard_empty=True)
             else:
                 bag[d.name] = grow_bag_with_new_features(im_h, bag['regs'], d)[d.name]
-
 
         # save the results for each image, one file per descriptor
         desc_names = bag.keys()

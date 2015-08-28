@@ -214,7 +214,7 @@ def read_bag(infile, desc_name):
     # same type. The following data is in x:
     # -first 4 columns in x correspond to the rectangular region on which
     #  the feature was computed
-    # -the ramaining columns correspond to descriptor values
+    # -the remaining columns correspond to descriptor values
     # -each row corresponds to a patch in the image (at coordinates given
     #  by the first 4 values)
     ndesc, nfeat = x.shape
@@ -231,7 +231,7 @@ def read_bag(infile, desc_name):
 
 
 def build_codebook_kmeans_online(bag, codebook_size, desc_names, standardize=False):
-    desc = [np.array(bag[dn_]) for dn_ in desc_names]                  # ensures a strict ordring
+    desc = [np.array(bag[dn_]) for dn_ in desc_names]                  # ensures a strict ordering
 
     X = np.hstack(desc)                                                # put all feature vectors in an array
     if standardize:

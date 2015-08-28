@@ -6,6 +6,9 @@ __all__ = ['LocalDescriptor', 'IdentityDescriptor']
 
 from abc import ABCMeta, abstractmethod
 from future.utils import bytes_to_native_str as nstr
+from scipy.linalg import norm
+from numpy import dot
+
 
 class LocalDescriptor:
     """
@@ -19,9 +22,9 @@ class LocalDescriptor:
     def compute(self, image):
         pass
 
-    @abstractmethod
-    def dist(self, ft1, ft2, method=None):
-        pass
+    @staticmethod
+    def dist(self, ft1, ft2, method=''):
+        return 0.0
 # end class LocalDescriptor
 
 
@@ -46,13 +49,14 @@ class IdentityDescriptor(LocalDescriptor):
         """
         return image.reshape(image.size)
 
+    @staticmethod
     def dist(self, ft1, ft2, method='euclidean'):
         dm = {'euclidean': lambda x_, y_: norm(x_ - y_),
               'cosine': lambda x_, y_: dot(x_, y_) / (norm(x_) * norm(y_))
               }
 
         method = method.lower()
-        if method not in dm.keys():
+        if method not in dm:
             raise ValueError('Unknown method')
 
         return dm['method'](ft1, ft2)
