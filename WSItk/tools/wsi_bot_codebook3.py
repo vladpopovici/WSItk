@@ -1,13 +1,14 @@
 #!/usr/bin/env python2
 
 #
-# wsi_bot_codebook2
+# wsi_bot_codebook3
 #
-# Version 2 of codebook construction:
+# Version 3 of codebook construction:
 #
 # -uses OpenCV for faster operation - but different local descriptors than in the 1st version;
 # -uses annotation files for defining the regions from where the descriptors are to be
 #  extracted
+# - try to optimize the codebook with respect to some class labels
 
 from __future__ import (absolute_import, division, print_function, unicode_literals)
 
@@ -18,43 +19,53 @@ import os
 import argparse as opt
 import numpy as np
 import numpy.linalg
-#from scipy.linalg import norm
+from scipy.stats import ttest_ind
+
 import skimage.draw
 import skimage.io
 from skimage.exposure import equalize_adapthist, rescale_intensity
 import cv2
 import cv2.xfeatures2d
 from sklearn.cluster import MiniBatchKMeans
+from sklearn.lda import LDA
 
 from stain.he import rgb2he
 from util.storage import ModelPersistence
+
+def find_in_list(_value, _list):
+    """
+    Returns the indexes of all occurrences of value in a list.
+    """
+    return np.array([i for i, v in enumerate(_list) if v == _value], dtype=int)
 
 
 def main():
     p = opt.ArgumentParser(description="""
             Extracts features from annotated regions and constructs a codebook of a given size.
             """)
-    p.add_argument('in_file', action='store', help='a file with pairs of image and annotation files')
+    p.add_argument('in_file', action='store', help='a file with image file, annotation file and label (0/1)')
     p.add_argument('out_file', action='store', help='resulting model file name')
-    p.add_argument('codebook_size', action='store', help='codebook size', type=int)
+    #p.add_argument('codebook_size', action='store', help='codebook size', type=int)
     p.add_argument('-t', '--threshold', action='store', type=int, default=5000,
                    help='Hessian threshold for SURF features.')
     p.add_argument('-s', '--standardize', action='store_true', default=False,
                    help='should the features be standardized before codebook construction?')
-    p.add_argument('-x', action='store_true', help='save the image patches closes to the code blocks?')
     p.add_argument('-v', '--verbose', action='store_true', help='verbose?')
     
     args = p.parse_args()
     th = args.threshold
     
-    all_key_points, all_descriptors, all_image_names = [], [], []
+    all_image_names, all_descriptors = [], []
     all_roi = []
+    y = []
+    unique_image_names = []
     with open(args.in_file, mode='r') as fin:
         for l in fin.readlines():
             l = l.strip()
             if len(l) == 0:
                 break
-            img_file, annot_file = [z_ for z_ in l.split()][0:2]  # file names: image and its annotation
+            img_file, annot_file, lbl = [z_ for z_ in l.split()][0:3]  # file names: image and its annotation and label
+            y.append(int(lbl))
             
             if args.verbose:
                 print("Image:", img_file)
@@ -95,16 +106,10 @@ def main():
                 print("\t...", str(len(keyp)), "features extracted")
                 
             all_descriptors.extend(desc)
-            if args.x:
-                # only needed if saving patches:
-                all_key_points.extend(keyp)
-                all_image_names.extend([img_file] * len(keyp))
-                all_roi.extend([(xmin, xmax, ymin, ymax)] * len(keyp))
+            all_image_names.extend([img_file] * len(keyp))
+            unique_image_names.append(img_file)            
         # end for
-        
-    if args.verbose:
-        print("\nK-means clustering")
-        
+            
     X = np.hstack(all_descriptors)
     X = np.reshape(X, (len(all_descriptors), all_descriptors[0].size), order='C')
     if args.standardize:
@@ -114,23 +119,64 @@ def main():
         Xs[np.isclose(Xs, 1e-16)] = 1.0
         X = (X - Xm) / Xs
     
-    if args.verbose:
-        print("\t...with", str(X.shape[0]), "points")
-        
+    y = np.array(y, dtype=int)
+    
     rng = np.random.RandomState(0)
-    vq = MiniBatchKMeans(n_clusters=args.codebook_size, random_state=rng,
+    acc = []                           # will keep accuracy of the classifier
+    vqs = []                           # all quantizers, to find the best
+    for k in np.arange(10, 121, 10):
+        # Method:
+        # -generate a codebook with k codewords
+        # -re-code the data
+        # -compute frequencies
+        # -estimate classification on best 10 features
+        
+        if args.verbose:
+            print("\nK-means clustering (k =", str(k), ")")
+            print("\t...with", str(X.shape[0]), "points")
+        
+        #-codebook and re-coding
+        vq = MiniBatchKMeans(n_clusters=k, random_state=rng,
                          batch_size=500, compute_labels=True, verbose=False)   # vector quantizer
+        vq.fit(X)
+        vqs.append(vq)
+        
+        #-codeword frequencies
+        frq = np.zeros((len(unique_image_names), k))
+        for i in range(vq.labels_.size):
+            frq[unique_image_names.index(all_image_names[i]), vq.labels_[i]] += 1.0
 
-    vq.fit(X)
+        for i in range(len(unique_image_names)):
+            if frq[i, :].sum() > 0:
+                frq[i, :] /= frq[i, :].sum()
+
+        if args.verbose:
+            print("...\tfeature selection (t-test)")
+        pv = np.ones(k)
+        for i in range(k):
+            _, pv[i] = ttest_ind(frq[y == 0, i], frq[y == 1, i])
+        idx = np.argsort(pv)         # order of the p-values
+        if args.verbose:
+            print("\t...classification performance estimation")
+        clsf = LDA(solver='lsqr', shrinkage='auto').fit(frq[:,idx[:10]], y) # keep top 10 features
+        acc.append(clsf.score(frq[:, idx[:10]], y))
+    
+    acc = np.array(acc)
+    k = np.arange(10, 121, 10)[acc.argmax()]  # best k
+    if args.verbose:
+        print("\nOptimal codebook size:", str(k))
+
+    # final codebook:
+    vq = vqs[acc.argmax()]
 
     # compute the average distance and std.dev. of the points in each cluster:
-    avg_dist = np.zeros(args.codebook_size)
-    sd_dist = np.zeros(args.codebook_size)
-    for k in range(0, args.codebook_size):
+    avg_dist = np.zeros(k)
+    sd_dist = np.zeros(k)
+    for k in range(0, k):
         d = numpy.linalg.norm(X[vq.labels_ == k, :] - vq.cluster_centers_[k, :], axis=1)
         avg_dist[k] = d.mean()
         sd_dist[k] = d.std()
-        
+
     with ModelPersistence(args.out_file, 'c', format='pickle') as d:
         d['codebook'] = vq
         d['shift'] = Xm
@@ -139,31 +185,6 @@ def main():
         d['avg_dist_to_centroid'] = avg_dist
         d['stddev_dist_to_centroid'] = sd_dist
 
-    if args.x:
-        # find the closest patches to each centroid:
-        idx = np.zeros(args.codebook_size, dtype=np.int)
-        d = np.zeros(X.shape[0])
-        for k in range(0, args.codebook_size):
-            for i in range(0, X.shape[0]):
-                d[i] = numpy.linalg.norm(X[i,:] - vq.cluster_centers_[k,:])
-            idx[k] = d.argmin()        # the index of the closest patch to k-th centroid
-        for k in range(0, args.codebook_size):
-            i = idx[k]
-            x, y = all_key_points[i].pt
-            x = int(np.round(x))
-            y = int(np.round(y))
-            r = all_key_points[i].size   # diameter of the region
-            img = cv2.imread(all_image_names[i])
-            print("Image:", all_image_names[i],
-                  "\tPatch (row_min->max, col_min->max):",
-                  str(y+all_roi[i][2]-int(r/2)),
-                  str(y+all_roi[i][2]+int(r/2)),
-                  str(x+all_roi[i][0]-int(r/2)),
-                  str(x+all_roi[i][0]+int(r/2)))
-            patch = img[y+all_roi[i][2]-int(r/2):y+all_roi[i][2]+int(r/2),
-                        x+all_roi[i][0]-int(r/2):x+all_roi[i][0]+int(r/2), :]
-            cv2.imwrite('codeblock_'+str(k)+'.png', patch)
-            
     return True
 
 
