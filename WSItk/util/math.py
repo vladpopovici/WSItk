@@ -42,4 +42,17 @@ class dist:
         # Matusita distance between histograms
         return np.sqrt(np.sum((np.sqrt(x_)-np.sqrt(y_))**2))
 
+    @staticmethod
+    def chisq(x_, y_):
+        # Chi^2 distance between two histograms
+        a = (x_ - y_)**2
+        b = x_ + y_
+        # to avoid diving by 0
+        i = np.isclose(b, 1e-16)
+        if i.any():
+            a[i] = 0
+            b[i] = 1
+
+        return 0.5*np.sum(a / b)
+
 # end class dist

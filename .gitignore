@@ -66,3 +66,11 @@ target/
 *.iml
 
 *.xml
+
+.idea/misc.xml
+
+.idea/misc.xml
+
+.idea/workspace.xml
+
+.idea/WSItk.iml

@@ -45,7 +45,7 @@ def main():
         im_h, _, _ = rgb2he2(image_orig)
 
     if args.roi is None:
-        roi = (0, img.shape[0]-1, 0, img.shape[1]-1)
+        roi = (0, im_h.shape[0]-1, 0, im_h.shape[1]-1)
     else:
         roi = args.roi
 

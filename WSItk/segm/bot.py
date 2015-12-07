@@ -23,6 +23,15 @@ from util.misc import intg_image
 from descriptors.txtgrey import HaarLikeDescriptor
 from ml.gap import gap
 
+import joblib
+
+def worker1(img_, r_, woff_, desc_, discard_empty_):
+    if discard_empty_ and img_[r_[0]:r_[1], r_[2]:r_[3]].sum() < 1e-16:
+        return (None, None)
+    # adjust if needed:
+    r2 = (r_[0], r_[1] - woff_[1], r_[2], r_[3] - woff_[0])
+    return (desc_.compute(img_[r_[0]:r_[1], r_[2]:r_[3]]), r2)
+
 def grow_bag_from_new_image(image, desc, w_size, n_obj, **kwargs):
     """
     Extracts local descriptors from a new image.
@@ -77,11 +86,19 @@ def grow_bag_from_new_image(image, desc, w_size, n_obj, **kwargs):
         sampling_strategy = 'random'
     else:
         sampling_strategy = kwargs['sampling_strategy']
-        
+
     if 'discard_empty' in kwargs:
         discard_empty = kwargs['discard_empty']
     else:
         discard_empty = False
+
+    if discard_empty:
+        if image.dtype == np.uint8:
+            discard_empty_threshold = w_size[0]*w_size[1]/20
+        elif image.dtype == np.float32 or image.dtype == np.float64:
+            discard_empty_threshold = 1e-5
+        else:
+            discard_empty_threshold = 0
 
     w_offset = (0, 0)
     if isinstance(desc, HaarLikeDescriptor):
@@ -111,7 +128,7 @@ def grow_bag_from_new_image(image, desc, w_size, n_obj, **kwargs):
     n = 0
 
     for r in itw:
-        if discard_empty and image[r[0]:r[1], r[2]:r[3]].sum() < 1e-16:
+        if discard_empty and image[r[0]:r[1], r[2]:r[3]].sum() <= discard_empty_threshold:
             continue
 
         # adjust if needed:
@@ -122,6 +139,19 @@ def grow_bag_from_new_image(image, desc, w_size, n_obj, **kwargs):
         n += 1
         if n > n_obj:
             break
+
+#    wnd = [w for w in itw]             # pre-generate windows
+#    wnd = wnd[:min(len(wnd), n_obj)]   # keep only at most n_obj windows
+#
+#    # parallelized:
+#    res = joblib.Parallel(n_jobs=joblib.cpu_count())( joblib.delayed(worker1)(image, r, w_offset, desc, discard_empty) for r in wnd )
+#
+#    wnd = []
+#    bag = []
+#    for b, w in res:
+#        if not b is None:
+#            bag.append(b)
+#            wnd.append(w)
 
     return {desc.name: bag, 'regs': wnd}
 
@@ -198,7 +228,7 @@ def read_bag(infile, desc_name):
     file contains values corresponding to a single type of descriptors,
     since no information distinguishing the descriptors is stored in the
     file.
-    
+
     :param infile: string
         file name
     :param desc_name: string
@@ -240,17 +270,17 @@ def build_codebook_kmeans_online(bag, codebook_size, desc_names, standardize=Fal
         Xs = np.std(X, axis=0)
         Xs[np.isclose(Xs, 1e-16)] = 1.0
         X = (X - Xm) / Xs
-    
+
     if codebook_size is None:
         # try to estimate a suitable codebook size based on gap statistic:
         codebook_size,_ = gap(X, Ks=np.linspace(start=10, stop=100, num=10, dtype=np.int32),
                               Wstar=None, B=20)
         print("Best codebook size:", codebook_size)
-            
+
     rng = np.random.RandomState(0)
     vq = MiniBatchKMeans(n_clusters=codebook_size, random_state=rng,
                          batch_size=500, compute_labels=True, verbose=True)   # vector quantizer
 
     vq.fit(X)
-    
+
     return vq

@@ -1,7 +1,7 @@
 #!/usr/bin/env python2
 """
-Haematoxylin and Eosin staining is the most common staining used for pathology 
-slides. This program extracts the information (intensity) corresponding to each 
+Haematoxylin and Eosin staining is the most common staining used for pathology
+slides. This program extracts the information (intensity) corresponding to each
 of the stainings, from a RGB image.
 """
 from __future__ import (division, print_function, unicode_literals)
@@ -14,6 +14,7 @@ import os
 import argparse as opt
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
+import numpy as np
 
 import skimage.io
 import skimage.exposure
@@ -49,12 +50,17 @@ def main():
 
     img = skimage.io.imread(img_file)
 
-    img_h, img_e = rgb2he(img)
+    img_h, img_e = rgb2he(img, normalize=True)
 
     if args.histeq:
-        img_h = skimage.exposure.equalize_hist(img_h)
-        img_e = skimage.exposure.equalize_hist(img_e)
+        img_h = skimage.exposure.equalize_adapthist(img_h)
+        img_e = skimage.exposure.equalize_adapthist(img_e)
 
+    img_h = skimage.exposure.rescale_intensity(img_h, out_range=(0,255))
+    img_e = skimage.exposure.rescale_intensity(img_e, out_range=(0,255))
+
+    img_h = img_h.astype(np.uint8)
+    img_e = img_e.astype(np.uint8)
     skimage.io.imsave(pfx + '_h.pgm', img_h)
     skimage.io.imsave(pfx + '_e.pgm', img_e)
 
@@ -71,16 +77,15 @@ def main():
         t.text = pfx + '_h.pgm'
         t = ET.SubElement(r, 'outfile')
         t.text = pfx + '_e.pgm'
-    
+
         raw_txt = ET.tostring(r, 'utf-8')
         reparsed = minidom.parseString(raw_txt)
         pp_txt = reparsed.toprettyxml(indent='  ')
         meta_file = open(pfx+'_he.meta.xml', 'w')
         meta_file.write(pp_txt)
-        
+
     return
 
 
 if __name__ == '__main__':
     main()
-    

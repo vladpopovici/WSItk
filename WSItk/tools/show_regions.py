@@ -29,10 +29,10 @@ def main():
     The user must specify the label of the regions to be emphasized.
     """)
     p.add_argument('image', action='store', help='image file name')
-    p.add_argument('result', action='store', help='a configuration file')
+    p.add_argument('result', action='store', help='result image file')
     p.add_argument('regions', action='store', help='file with the regions of interest')
-    p.add_argument('-l', '--label', action='store', type=int, default=0,
-                   help='label of the regions to be emphasized')
+    p.add_argument('label', action='store', nargs='+', type=int,
+                   help='one or more labels (space-separated) of the regions to be emphasized')
     p.add_argument('-g', '--gamma', action='store', nargs=1, type=float,
                    help='the gamma level of the background regions',
                    default=0.2)
@@ -40,16 +40,17 @@ def main():
     img_file = args.image
     res_file = args.result
     reg_file = args.regions
-    lab = args.label
+    labels = args.label
     gam = args.gamma
 
     img = skimage.io.imread(img_file)
     regs = []
+    
     with open(reg_file, 'r') as f:
         lines = f.readlines()
         for l in lines:
-            r = [int(x_) for x_ in l.strip().split()]
-            if r[4] == lab:
+            r = [int(x_) for x_ in l.strip().split()[:-1]]
+            if r[4] in labels:
                 regs.append(r[0:4])
 
     img = enhance_patches(img, regs, _gamma=gam)
